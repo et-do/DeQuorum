@@ -17,6 +17,8 @@ Cross-cutting finding: **per-query attribution as a formal mathematical object i
 
 | # | Spec | Status |
 | - | ---- | ------ |
-| 01 | [HDC bundle attribution functional](experiments/01-hdc-attribution-functional.md) | draft spec, no code yet |
+| 01 | HDC bundle attribution functional | **shelved** — see [archive/](../archive/) |
 
-Process: a spec must list its **claim**, **axioms**, **falsification criteria**, and **baselines** *before* any code is written. Results that survive falsification go into a write-up; results that don't get documented as what failed and why.
+Experiment 1 surfaced that the proposed pivotal-decomposition formula was mathematically identical to leave-one-out attribution. The work is preserved in [archive/](../archive/) because the question (per-source attribution math) remains the central research problem for the project — it just needs a different architectural substrate. The HDC-specific code does not transfer to LLM/MoE/LoRA attribution, which is the new target.
+
+Process for future experiments: a spec must list its **claim**, **axioms**, **falsification criteria**, and **baselines** *before* any code is written. Results that survive falsification go into a write-up; results that don't get documented as what failed and why.

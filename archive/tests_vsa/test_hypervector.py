@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from ai_playground.vsa import bind, bundle, cosine, random_hypervector, unbind
 from hypothesis import given
 from hypothesis import strategies as st
-
-from ai_playground.vsa import bind, bundle, cosine, random_hypervector, unbind
 
 DIMS = 1024
 seeds = st.integers(min_value=0, max_value=2**31 - 1)

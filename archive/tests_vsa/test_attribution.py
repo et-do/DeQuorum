@@ -2,9 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from hypothesis import given
-from hypothesis import strategies as st
-
 from ai_playground.vsa import (
     banzhaf_attribution,
     exact_shapley,
@@ -12,6 +9,8 @@ from ai_playground.vsa import (
     random_hypervector,
     uniform_attribution,
 )
+from hypothesis import given
+from hypothesis import strategies as st
 
 
 def _components(n: int, d: int, base_seed: int) -> np.ndarray:

@@ -1,16 +1,19 @@
 {
     "name": "Dev Container",
-    "image": "mcr.microsoft.com/devcontainers/python:3.13",
+    "build": { "dockerfile": "Dockerfile" },
     "features": {
         "ghcr.io/devcontainers-extra/features/uv:1": {},
         "ghcr.io/devcontainers/features/github-cli:1": {}
     },
-    // Named volumes so host doesn't conflict, and so Claude Code history survives rebuilds
+    // Named volumes so host doesn't conflict, and so Claude Code history + Ollama models survive rebuilds
     "mounts": [
         "source=${localWorkspaceFolderBasename}-venv,target=${containerWorkspaceFolder}/.venv,type=volume",
-        "source=${localWorkspaceFolderBasename}-claude,target=/home/vscode/.claude,type=volume"
+        "source=${localWorkspaceFolderBasename}-claude,target=/home/vscode/.claude,type=volume",
+        "source=${localWorkspaceFolderBasename}-ollama,target=/home/vscode/.ollama,type=volume"
     ],
-    "postCreateCommand": "sudo chown vscode:vscode .venv /home/vscode/.claude && UV_LINK_MODE=copy uv sync --extra dev && uv run pre-commit install",
+    "forwardPorts": [11434],
+    "postCreateCommand": "sudo chown vscode:vscode .venv /home/vscode/.claude /home/vscode/.ollama && UV_LINK_MODE=copy uv sync --extra dev && uv run pre-commit install",
+    "postStartCommand": "pgrep -x ollama > /dev/null || (nohup ollama serve > /tmp/ollama.log 2>&1 & disown)",
     "customizations": {
         "vscode": {
             "extensions": [
