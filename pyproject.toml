@@ -1,0 +1,105 @@
+[project]
+name = "ai-playground"
+version = "0.1.0"
+description = "Sandbox for playing around with AI architectures"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.13"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+dependencies = [
+    "chromadb>=1.5",
+    "sentence-transformers>=5.0",
+    "mcp>=1.27",
+    "sqlite-utils>=3.38",
+    "pydantic>=2.12",
+    "pydantic-settings>=2.13",
+    "numpy>=2.4",
+    "networkx>=3.4",
+]
+
+[project.optional-dependencies]
+experimental = [
+    # Symbolic math for deterministic/algebraic reasoning
+    "sympy>=1.13",
+    # Category theory and compositional diagrams (DisCoPy)
+    "discopy>=1.2",
+    # Scientific computing
+    "scipy>=1.15",
+    # RDF/OWL knowledge graph representation (semantic triple stores for Knowledge Crystal nodes)
+    "rdflib>=7.1",
+    # SPARQL client for querying Wikidata, DBpedia, and other open knowledge graph endpoints
+    "sparqlwrapper>=2.0",
+    # WordNet + corpus access (ConceptNet, tokenizers, etc.) for bootstrapping node data
+    "nltk>=3.9",
+    # SMT solver for formal Proof-of-Correctness and constraint satisfaction
+    "z3-solver>=4.13",
+    # Visualization: graph traversals, VSA vector spaces, composition chains
+    "matplotlib>=3.10",
+    # Lightweight parser for building formal grammars/DSLs for composition query languages
+    "lark>=1.2",
+]
+ner = [
+    # spaCy NER for typed entity extraction during consolidation
+    # Install model separately: uv run python -m spacy download en_core_web_sm
+    "spacy>=3.7",
+]
+dev = [
+    "pytest>=9.0",
+    "pytest-asyncio>=1.0",
+    "pytest-benchmark>=5.1",
+    "pytest-cov>=6.0",
+    "pytest-xdist>=3.5",
+    # Property-based testing: verify mathematical invariants of novel architectures
+    "hypothesis>=6.130",
+    "ruff>=0.15",
+    "mypy>=1.20",
+    "pre-commit>=4.0",
+    # VS Code notebook support for iterative research
+    "ipykernel>=6.29",
+]
+
+[project.urls]
+Homepage = "https://github.com/et-do/ai-playground"
+Repository = "https://github.com/et-do/ai-playground"
+Issues = "https://github.com/et-do/ai-playground/issues"
+
+[project.scripts]
+ai_playground = "ai_playground.cli:main"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-n auto --benchmark-skip"
+markers = [
+    "integration: marks tests as slow MCP integration tests (skip with -m 'not integration')",
+    "slow: marks tests as slow (skip with -m 'not slow')",
+]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+plugins = ["pydantic.mypy"]
+
+
+[tool.hatch.build.targets.wheel]
+packages = ["ai_playground"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
