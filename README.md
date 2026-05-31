@@ -32,7 +32,7 @@ dequorum/
 tests/
   test_*.py + per-module subdirs + invariants/
 archive/              # Shelved HDC research code (Experiment 1)
-research/             # Literature reviews + experiment specs
+docs/research/        # Literature reviews + experiment specs
 ```
 
 ## Dev container

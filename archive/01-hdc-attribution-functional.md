@@ -136,7 +136,7 @@ Phase 2 — property tests under `tests/vsa/test_attribution.py`:
 - Bit-exact reproducibility (carries from `core` invariants).
 - Empirical L∞ gap between `banzhaf_attribution` and `exact_shapley` for small `n`.
 
-Phase 3 — empirical sweep under `research/experiments/01-hdc-attribution-functional/`:
+Phase 3 — empirical sweep under `docs/research/experiments/01-hdc-attribution-functional/`:
 - `run_h1_efficiency.py` — sweep `(n, d)`, plot efficiency rate.
 - `run_h2_shapley_agreement.py` — L1/L2/L∞ gap at small `n`.
 - `run_h3_sample_complexity.py` — convergence with sample count.

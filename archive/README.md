@@ -30,7 +30,7 @@ What DOES carry forward from Path R, in active use under `src/dequorum/`:
 - The conceptual model of signing every output and chaining signatures end-to-end.
 - The four invariants as a quality bar (now enforced informally rather than by a dedicated invariants test suite — those tests targeted only the archived toy modules).
 
-The literature reviews under `research/notes/` remain active references — especially [04 (attribution math)](../research/notes/04-attribution-math-frontier.md), which is directly relevant to MoE gating-weight attribution.
+The literature reviews under `docs/research/notes/` remain active references — especially [04 (attribution math)](../docs/research/notes/04-attribution-math-frontier.md), which is directly relevant to MoE gating-weight attribution.
 
 ## Key finding from Experiment 1 (worth remembering)
 
