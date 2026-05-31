@@ -1,69 +1,83 @@
 # dequorum
 
-Open-source crowdsourced AI network for verified OSS / code knowledge. Domain experts contribute signed facts; a public peer-review system validates them; an LLM with hot-swap expert adapters answers queries by routing to relevant experts; per-query micro-payments flow back to the contributing experts, reviewers, and compute providers.
+**Intelligence-on-demand, built and owned by the people who use it.** Domain experts contribute signed factual claims; a public peer-review system votes them in or out; an LLM answers queries by routing to relevant approved knowledge and signing every step of the proof chain end-to-end; per-query micro-payments flow back to contributors, reviewers, and compute hosts.
 
-This is the codebase for the v0.1 MVP. License: **Apache 2.0**.
-
-## Invariants
-
-Everything in this repo is tested against four invariants:
-
-1. **Bit-exact reproducibility** — same input ⇒ same output (and same failure), every time.
-2. **Full provenance** — every output carries a signed chain of which contributors produced it.
-3. **Explicit failure** — missing data raises `CompositionError`; the system never fabricates.
-4. **Compositional locality** — adding an unrelated contributor never silently changes existing outputs.
-
-Property tests for these live under [tests/invariants/](tests/invariants/).
+This is the codebase for the v0.1 MVP. License: **Apache 2.0**. See [docs/PRODUCT.md](docs/PRODUCT.md) for the full product spec.
 
 ## Layout
 
 ```
-dequorum/
-  core/               # Signature, ProofObject, AttributionLedger, errors, hashing
-  experts.py          # Expert dataclass + ExpertRegistry
-  router.py           # KeywordRouter — picks experts per query
-  base_model.py       # Ollama HTTP client + deterministic MockBaseModel
-  pipeline.py         # End-to-end query: route → invoke experts → combine → credit ledger
-  seed_experts.py     # Five hand-written OSS / code expert personas
-  cli.py              # `dequorum query | list-experts | demo`
-  category/           # Categorical composition primitives (carried over from earlier scaffolding)
-  graph/              # Signed knowledge-graph routing
-  expert_network/     # Toy 3-node deterministic pipeline (carried over)
-tests/
-  test_*.py + per-module subdirs + invariants/
-archive/              # Shelved HDC research code (Experiment 1)
-docs/research/        # Literature reviews + experiment specs
+src/dequorum/
+  core/         # Signature, ProofObject, AttributionLedger, errors, hashing
+  knowledge/    # Contribution + ContributionStore (SQLite) + status + seed data
+  experts/      # Expert + ExpertRegistry + seed personas
+  retrieval/    # BM25 retrieval over approved contributions
+  routing/      # KeywordRouter + EmbeddingRouter + shared types + Embedder
+  review/       # Vote + ReviewService (tally + status transitions)
+  inference/    # BaseModel adapter + composition strategies + Pipeline
+  web/          # FastAPI + Jinja2 + Tailwind CDN UI
+  benchmark/    # Quality reality-check harness
+  cli.py
+tests/          # mirrors the package structure
+archive/        # Shelved Path-R research code (HDC, deterministic toy)
+docs/
+  PRODUCT.md
+  research/     # Literature reviews + experiment specs
 ```
 
 ## Dev container
 
-The dev container ships with **Ollama** pre-installed and runs `ollama serve` automatically on container start. Model weights persist in a named volume (`*-ollama`) so rebuilds don't lose them.
+Ships with **Ollama** pre-installed; `ollama serve` starts automatically. Model weights persist in a named volume (`*-ollama`) so rebuilds don't lose them.
 
-First time only, pull the base model:
+First time only:
 
 ```bash
-ollama pull qwen2.5-coder:7b   # ~5 GB, takes 5-10 min depending on connection
+ollama pull qwen2.5-coder:7b   # ~5 GB, takes 5-10 min
 ```
-
-After that, the model stays cached across container rebuilds.
 
 ## Run
 
 ```bash
 uv sync --extra dev
 
-# Run the toy deterministic pipeline (no LLM needed)
-uv run dequorum demo --symptom fatigue --age 14
-
-# List the seed experts
+# List seed experts and seed contributions
 uv run dequorum list-experts
+uv run dequorum list-contributions
 
-# Ask a real question with the mock model (deterministic, no Ollama needed)
-uv run dequorum query "how do I type a generator function in python?" --mock
+# Ask a question (mock model — fast, deterministic, no Ollama needed)
+uv run dequorum query "how do I type a generator function?" --mock
 
-# Ask with the real Qwen 2.5 Coder model (requires `ollama pull` first)
-uv run dequorum query "how do I type a generator function in python?"
+# Ask with real Qwen 2.5 Coder via Ollama
+uv run dequorum query "how do I type a generator function?"
 
-# Full test suite
+# Start the web UI (forwarded to localhost:8000 in devcontainers)
+uv run dequorum serve --mock         # mock model, fast
+uv run dequorum serve                 # real Qwen
+
+# Submit a new contribution (will start in 'pending' status)
+uv run dequorum submit --as python-typing --text "..." --cite https://...
+
+# Vote on a pending contribution (need 2 distinct +1 votes to approve)
+uv run dequorum vote --as python-async --contribution <id-prefix> --score 1
+
+# Review queue
+uv run dequorum review
+
+# Run the quality reality check (15 questions x 3 conditions; mock = fast)
+uv run dequorum benchmark --mock --output report.md
+uv run dequorum benchmark --output report.md   # real Qwen, ~20-40 min on CPU
+
+# Tests + lint
 uv run pytest
+uv run ruff check src tests
 ```
+
+## Quality benchmark
+
+The `benchmark` subcommand runs every question through three conditions side-by-side:
+
+- **A) Vanilla baseline** — bare Qwen with a generic system prompt
+- **B) DeQuorum full** — route → retrieve approved contributions → expert + signed chain
+- **C) DeQuorum no-retrieval** — router + expert prompt only, contributions skipped
+
+The result is a Markdown report you read and judge. The point isn't an automated number — it's an honest comparison that tells you whether the contribution layer is actually adding value vs. an unmodified LLM. Run it whenever you make material changes to routing, retrieval, or composition.

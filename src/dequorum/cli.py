@@ -119,6 +119,34 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     serve.add_argument("--reload", action="store_true", help="Auto-reload on edits")
 
+    bench = sub.add_parser(
+        "benchmark",
+        help="Quality check: vanilla vs DeQuorum-full vs DeQuorum-no-retrieval",
+    )
+    bench.add_argument(
+        "--mock", action="store_true", help="Use mock model (smoke test)"
+    )
+    bench.add_argument("--model", default="qwen2.5-coder:7b", help="Ollama model tag")
+    bench.add_argument("--host", default="http://localhost:11434", help="Ollama host")
+    bench.add_argument(
+        "--router", choices=("keyword", "embedding"), default="embedding"
+    )
+    bench.add_argument("--min-score", type=float, default=None)
+    bench.add_argument("--top-k", type=int, default=2)
+    bench.add_argument("--retrieve-top-k", type=int, default=3)
+    bench.add_argument("--db", default=DEFAULT_DB)
+    bench.add_argument(
+        "--output",
+        default="docs/benchmarks/report.md",
+        help="Where to write the Markdown report (parent dir is auto-created)",
+    )
+    bench.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Run only the first N questions (smoke testing)",
+    )
+
     return parser
 
 
@@ -378,6 +406,53 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_benchmark(args: argparse.Namespace) -> int:
+    from dequorum.benchmark import SEED_QUESTIONS, run_benchmark
+    from dequorum.benchmark.runner import write_markdown_report
+
+    registry = build_seed_registry()
+    store = _open_store(args.db)
+
+    def router_factory(reg: ExpertRegistry) -> object:
+        return _build_router(reg, args.router, args.min_score)
+
+    model: MockBaseModel | OllamaBaseModel = (
+        MockBaseModel()
+        if args.mock
+        else OllamaBaseModel(model=args.model, host=args.host)
+    )
+    model_label = "mock" if args.mock else args.model
+
+    questions = SEED_QUESTIONS if args.limit is None else SEED_QUESTIONS[: args.limit]
+
+    def progress(i: int, total: int, text: str) -> None:
+        print(f"  [{i}/{total}] {text[:80]}", flush=True)
+
+    total = len(questions) * 3
+    print(f"Running {len(questions)} questions x 3 conditions = {total} generations...")
+    try:
+        report = run_benchmark(
+            questions=questions,
+            model=model,
+            registry=registry,
+            store=store,
+            router_factory=router_factory,
+            top_k=args.top_k,
+            retrieve_top_k=args.retrieve_top_k,
+            model_label=model_label,
+            progress=progress,
+        )
+    finally:
+        store.close()
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_markdown_report(report, output_path)
+    print(f"\nReport written: {output_path}")
+    print("Open it side-by-side with the spec and rate the answers honestly.")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.cmd == "query":
@@ -394,6 +469,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_list_experts(args)
     if args.cmd == "serve":
         return _cmd_serve(args)
+    if args.cmd == "benchmark":
+        return _cmd_benchmark(args)
     return 2
 
 

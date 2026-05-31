@@ -183,3 +183,5 @@ cython_debug/
 .dequorum.db
 .dequorum.db-journal
 .claude/settings.local.json
+
+.benchmarks/

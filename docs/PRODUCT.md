@@ -102,7 +102,86 @@ Gross revenue from each query is split by attribution:
 
 Tunable as we learn. The principle: contributors get the largest single slice.
 
-## 7. Principles we won't compromise on
+## 7. Compute economics — the case for contributor-powered AI
+
+The kickbacks in §6 are only viable because **the network's compute is contributed, not rented**. That's the core economic argument for why DeQuorum can exist as an alternative to incumbents: every dollar that doesn't go to a cloud provider is a dollar that can flow back to the people building and running the network.
+
+### Three stages of ownership, with honest cost math
+
+DeQuorum's path to a true user-owned foundational model has three stages. We're upfront that v0.1 isn't yet at the top of the ladder — but the architecture we're building now is exactly what makes the higher stages possible later.
+
+| Stage | What "user-owned" means here | Realistic timeline |
+| ----- | ---------------------------- | ------------------ |
+| **Stage 1 — Knowledge layer on a borrowed base** | Users own the signed contributions, voting, attribution, and economic layers. Reasoning is borrowed from a permissively-licensed open model (we use Qwen 2.5 Coder 7B today, Apache 2.0). | v0.1 → v1.0 (now → 12 months) |
+| **Stage 2 — Differentiated base via fine-tuning** | The network fine-tunes the base on the aggregate of peer-approved contributions. The resulting weights are uniquely shaped by community-verified knowledge. | v1.x → v2.0 (12-24 months) |
+| **Stage 3 — Crowd-trained base from scratch** | True foundational model trained end-to-end on the contributor network using Hivemind / DiLoCo / OpenDiLoCo / Prime-Intellect-class distributed training. | v2.x+ (24-36+ months), best done by partnership not from scratch |
+
+None of what we're building at Stage 1 gets thrown away as we move up the ladder. The signing primitives, attribution ledger, voting service, contributor identities, and orchestrator all become the social-economic layer beneath whatever training infrastructure plugs in later.
+
+### Per-query inference economics
+
+Assumptions: Qwen 2.5 Coder 7B at Q4 quantization, ~500 tokens of output per query, mid-tier consumer GPU (RTX 3060 / 6700 XT / Apple Silicon).
+
+| Path | Cash cost per query | Who pays |
+| ---- | ------------------- | -------- |
+| Rent cloud GPU (Together.ai, Fireworks) | $0.0001 – $0.001 | Operator, all out-of-pocket |
+| Rent dedicated GPU instance (RunPod, Lambda) | $0.0005 – $0.002 | Operator |
+| **Contributor's idle home GPU** | **~$0 cash, ~$0.0002 electricity** | Contributor; recouped via 25% revenue share |
+| **Contributor's always-on dedicated node** | **~$0.0005 electricity** | Contributor; recouped via 25% revenue share |
+
+**At 1M queries/day:**
+
+- Pure cloud: **$100–$1,000/day** cash burn for the operator
+- Pure contributor network: **$0 cash** for the operator; contributors collectively burn ~$200/day in electricity, recouped from kickbacks
+- A contributor earning the 25% compute-host share at $0.005-0.02 per query is making **5–25× their electricity cost** — that's the loop that keeps them connected.
+
+### Fine-tuning economics (Stage 2)
+
+| Workload | Cloud cost | Contributor network cost |
+| -------- | ---------- | ------------------------ |
+| Single LoRA adapter (~1-2h on 24GB GPU) | $3 – $20 | ~$0.30 – $1.00 in contributor electricity |
+| 100 LoRA adapters | $300 – $2,000 | ~$50 distributed electricity, $0 cash |
+| Full fine-tune of Qwen 7B on 10K contributions | $300 – $2,000, 1-3 days on 8× A100 | ~$10-50 distributed electricity, 3-7 days wall-clock |
+
+### Pre-training economics (Stage 3) — the big number
+
+For a **Llama-3-8B-class model** (~250 PFLOP-days of compute):
+
+| Path | Cost | Wall-clock |
+| ---- | ---- | ---------- |
+| Cloud cluster | **$500K – $2M cash** | ~1 month |
+| Network of 500 contributors with strong GPUs | **~$0 cash, $50-100K in distributed electricity** | ~1-2 months |
+
+For a **GPT-3-class model** (~3,640 PFLOP-days):
+
+| Path | Cost | Wall-clock |
+| ---- | ---- | ---------- |
+| Cloud cluster | **$5–10M cash** | 2-4 months |
+| Network of 1,000 strong contributor GPUs | **~$0 cash, $1-3M distributed electricity** | 6-12 months |
+| Network of 10,000 mid-tier contributor GPUs | **~$0 cash, $2-5M distributed electricity** | 3-6 months |
+
+### Honest caveats on Stage 3
+
+These numbers are real but come with three caveats no compute-marketing slide will tell you:
+
+1. **Bandwidth is the bottleneck.** Distributed pre-training needs gradient synchronization between workers. Data-center fabric is 100-400 Gbps; consumer internet is 100-1000 Mbps. Algorithms like DiLoCo specifically reduce sync frequency to make this tolerable, but distributed training is genuinely 5-20× slower wall-clock than the equivalent in-cluster training. The dollars-per-FLOP win is huge; the speed-per-FLOP win is not.
+2. **Reliability is lower.** Contributors drop out — power outages, GPU crashes, "I need my computer back tonight." Cloud clusters operate at ~99.9% uptime; contributor networks at ~95-99% with checkpoint recovery absorbing the gaps.
+3. **We don't build the training infrastructure ourselves.** Hivemind, DiLoCo, OpenDiLoCo, Prime Intellect's stack — these represent years of distributed-systems research. The pragmatic Stage 3 path is **partner with or integrate** one of these networks, contributing DeQuorum's data + attribution + economic layers to *their* training infrastructure. Building Stage 3 from scratch is multi-year, multi-engineer work that we don't need to attempt.
+
+### What stays paid at each stage
+
+Even at full Stage 3, some compute stays cash:
+
+| Stage | What contributor compute covers | What stays cash-paid by the operator |
+| ----- | ------------------------------- | ------------------------------------ |
+| v0.1 – v1.0 (inference + LoRAs) | ~100% of model compute | $10/mo VPS for the orchestrator |
+| v1.x (Stage 2 fine-tunes quarterly) | ~100% | ~$50/mo cloud fallback during contributor gaps |
+| v2.x (federated instances) | Inference + per-instance fine-tuning | Cross-instance coordination overhead, modest |
+| v3.x (Stage 3 pre-train) | ~100% of training FLOPs | Bandwidth subsidies during heavy gradient-sync phases (~$1-5K per training run) |
+
+**The structural punchline:** the cost-base-disrupting thesis is the strongest economic argument DeQuorum has. *Every dollar that flows to a contributor instead of to a cloud provider is what makes the kickback economics in §6 sustainable at scale.* This is also why the kickback split deliberately gives compute hosts the second-largest slice (25%) — without their hardware, the math doesn't work.
+
+## 8. Principles we won't compromise on
 
 These are the design choices we hold as load-bearing — the things that make DeQuorum a genuinely user-owned alternative to centrally-controlled AI rather than just another shell on top of one. Everything else is up for negotiation as the network grows.
 
@@ -120,7 +199,7 @@ Two things we openly compromise on for v0.1 (for now, not forever):
 - We don't train our own base model yet — we use Qwen 2.5 Coder 7B (Apache 2.0). A network-trained differentiated base comes in years 2–3 once aggregated approved contributions justify it.
 - We're not a get-rich-quick scheme. Top contributors can earn meaningful recurring income, but no one gets rich on a single contribution.
 
-## 8. Where we sit in the landscape
+## 9. Where we sit in the landscape
 
 Lots of great work exists in this space; here's where DeQuorum fits relative to neighbors we admire and learn from.
 
@@ -133,7 +212,7 @@ Lots of great work exists in this space; here's where DeQuorum fits relative to 
 | Petals | Decentralized inference | Many small specialized adapters (one expert per node) instead of one big model split across peers; fast on a single machine |
 | Hivemind | Distributed AI infrastructure | Modular per-contributor adapters that preserve attribution end-to-end, instead of collaborative base-model training that blends gradients |
 
-## 9. Regulatory & liability posture
+## 10. Regulatory & liability posture
 
 **Regulatory load is low for most cases, with specific exceptions.**
 
@@ -152,7 +231,7 @@ Compare to *Moffatt v. Air Canada* (2024) where Air Canada was held liable for h
 
 **Liability risk is real but architecturally minimized.** It is not zero, and the legal landscape around AI output is actively evolving.
 
-## 10. Open questions we haven't answered yet
+## 11. Open questions we haven't answered yet
 
 Honest about what's undecided:
 
@@ -163,13 +242,13 @@ Honest about what's undecided:
 - **Reputation algorithm.** How does the reputation-weighted voting actually compute weights? Linear? Logarithmic? Decay-with-time? Real design work.
 - **Moderation appeals process.** When a contribution is rejected or a contributor is sanctioned, what's the appeal flow?
 
-## 11. License & distribution
+## 12. License & distribution
 
 - **Code license:** Apache 2.0 (matches base model, includes patent grant, AI/ML community standard).
 - **Base model:** Qwen 2.5 Coder 7B, Apache 2.0, hash-pinned. Reasoning is borrowed; the differentiated layer is signed peer-approved knowledge on top.
 - **Distribution model:** official hosted instance (DeQuorum.org or similar) + fully open code. Anyone can self-host or fork. Federation between instances is a v1.0 design constraint, not a v2 bolt-on.
 
-## 12. Glossary
+## 13. Glossary
 
 Shared vocabulary the codebase already uses:
 
