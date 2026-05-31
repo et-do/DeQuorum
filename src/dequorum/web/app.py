@@ -89,8 +89,11 @@ def configure_app(
 def _build_router(registry: ExpertRegistry) -> EmbeddingRouter | KeywordRouter:
     if _config.router == "embedding":
         embedder = SentenceTransformerEmbedder()
-        threshold = 0.25 if _config.min_score is None else _config.min_score
-        return EmbeddingRouter(registry, embedder, min_score=threshold)
+        threshold = 0.18 if _config.min_score is None else _config.min_score
+        fallback = KeywordRouter(registry, fallback_to_all=False, min_score=1.0)
+        return EmbeddingRouter(
+            registry, embedder, min_score=threshold, fallback=fallback
+        )
     threshold = 1.0 if _config.min_score is None else _config.min_score
     return KeywordRouter(registry, min_score=threshold)
 

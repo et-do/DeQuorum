@@ -176,8 +176,13 @@ def _build_router(
 ) -> EmbeddingRouter | KeywordRouter:
     if kind == "embedding":
         embedder = SentenceTransformerEmbedder()
-        threshold = 0.25 if min_score is None else min_score
-        return EmbeddingRouter(registry, embedder, min_score=threshold)
+        threshold = 0.18 if min_score is None else min_score
+        # Keyword router as a deterministic safety net: catches obvious matches
+        # where embedding similarity dipped below the threshold for a relevant expert.
+        fallback = KeywordRouter(registry, fallback_to_all=False, min_score=1.0)
+        return EmbeddingRouter(
+            registry, embedder, min_score=threshold, fallback=fallback
+        )
     threshold = 1.0 if min_score is None else min_score
     return KeywordRouter(registry, min_score=threshold)
 

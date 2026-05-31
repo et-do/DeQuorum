@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Protocol
+
 import numpy as np
 
 from dequorum.experts.persona import Expert, ExpertRegistry
@@ -9,12 +11,22 @@ from dequorum.routing.embedder import Embedder, cosine_sim
 from dequorum.routing.result import RoutingResult, SelectedExpert
 
 
+class _Router(Protocol):
+    method: str
+
+    def route(self, query: str, top_k: int = 3) -> RoutingResult: ...
+
+
 class EmbeddingRouter:
     """Score experts by cosine similarity between query and expert profile embeddings.
 
-    No fallback. If no expert clears `min_score`, returns empty selection — the
-    pipeline will raise CompositionError, surfacing the gap rather than hallucinating
-    an expert.
+    If `fallback` is provided and no expert clears `min_score`, the fallback router
+    is consulted instead of immediately refusing — this catches the case where the
+    semantic similarity is low but a clear keyword match exists. The returned
+    RoutingResult is marked `fallback_used=True` so the caller can tell.
+
+    If no fallback is provided, returns empty selection on threshold miss and the
+    pipeline will raise CompositionError, surfacing the gap rather than guessing.
     """
 
     method = "embedding"
@@ -24,18 +36,21 @@ class EmbeddingRouter:
         registry: ExpertRegistry,
         embedder: Embedder,
         *,
-        min_score: float = 0.25,
+        min_score: float = 0.18,
+        fallback: _Router | None = None,
     ) -> None:
         self._registry = registry
         self._embedder = embedder
         self._min_score = min_score
+        self._fallback = fallback
         self._expert_matrix: np.ndarray | None = None
         self._expert_index: tuple[Expert, ...] = ()
         self._build_index()
 
     def _profile_text(self, expert: Expert) -> str:
         tags = " ".join(expert.specialty_tags)
-        return f"{expert.display_name}\n{tags}\n{expert.system_prompt}"
+        examples = "\n".join(expert.example_questions)
+        return f"{expert.display_name}\n{tags}\n{expert.system_prompt}\n{examples}"
 
     def _build_index(self) -> None:
         experts = self._registry.all()
@@ -71,6 +86,16 @@ class EmbeddingRouter:
         scored = [(s, e) for s, e in scored if s >= self._min_score]
         scored.sort(key=lambda row: (-row[0], row[1].expert_id))
         picked = scored[:top_k]
+
+        if not picked and self._fallback is not None:
+            backup = self._fallback.route(query, top_k=top_k)
+            return RoutingResult(
+                selected=backup.selected,
+                method=f"{self.method}+{backup.method}",
+                matched_tags=backup.matched_tags,
+                fallback_used=True,
+                threshold=self._min_score,
+            )
 
         return RoutingResult(
             selected=tuple(SelectedExpert(expert=e, score=s) for s, e in picked),

@@ -10,13 +10,19 @@ from dequorum.core.node import Signature
 
 @dataclass(frozen=True, slots=True)
 class Expert:
-    """A signed expert persona: who they are + how they answer."""
+    """A signed expert persona: who they are + how they answer.
+
+    `example_questions` are NOT part of the persona's behavior contract
+    (so they don't affect `prompt_digest`); they exist to enrich the text
+    the embedding router sees when matching queries to experts.
+    """
 
     expert_id: str
     display_name: str
     specialty_tags: tuple[str, ...]
     system_prompt: str
     signing_key: bytes
+    example_questions: tuple[str, ...] = ()
 
     @property
     def prompt_digest(self) -> str:

@@ -33,6 +33,15 @@ PYTHON_TYPING = Expert(
         "or which stdlib module backs each claim. If a question is outside Python "
         "typing, say so explicitly rather than guessing."
     ),
+    example_questions=(
+        "How do I type a generator function?",
+        "How do I use ParamSpec to forward decorator signatures?",
+        "What does TypeVar bound vs constraint mean?",
+        "How do Protocol and ABC differ for structural subtyping?",
+        "How do I type an async iterator?",
+        "What's the difference between Optional and Union?",
+        "How do I add type hints to a dataclass?",
+    ),
     signing_key=_seed_key("python-typing"),
 )
 
@@ -58,6 +67,15 @@ PYTHON_ASYNC = Expert(
         "anyio with reference to the cpython source or the official docs. Distinguish "
         "between coroutines, tasks, and futures precisely. If the user is conflating "
         "threading with async, correct them."
+    ),
+    example_questions=(
+        "What's the difference between asyncio.gather and asyncio.wait?",
+        "How does asyncio.create_task differ from awaiting a coroutine directly?",
+        "When should I use Trio's nursery instead of asyncio?",
+        "How do I cancel an in-flight async operation safely?",
+        "What does anyio.to_thread.run_sync actually do?",
+        "Why is my coroutine 'never awaited'?",
+        "How does the GIL interact with asyncio?",
     ),
     signing_key=_seed_key("python-async"),
 )
@@ -87,6 +105,15 @@ PYTHON_PACKAGING = Expert(
         "build backends (hatchling, setuptools, flit) and frontends (pip, uv, poetry). "
         "If a question requires running code, say so."
     ),
+    example_questions=(
+        "What's the difference between pip and pipx?",
+        "When should I use uv instead of pip?",
+        "What does PEP 660 say about editable installs?",
+        "Should I use hatchling, setuptools, or flit as my build backend?",
+        "How do I declare optional dependencies in pyproject.toml?",
+        "What's the difference between sdist and wheel?",
+        "How do dependency groups work in PEP 735?",
+    ),
     signing_key=_seed_key("python-packaging"),
 )
 
@@ -110,6 +137,15 @@ RUST_OWNERSHIP = Expert(
         "the Rust Reference and Rustonomicon. Be precise about the distinctions "
         "between owned, borrowed, mutably-borrowed, and moved values. If the user is "
         "asking about Rust async, say so and decline."
+    ),
+    example_questions=(
+        "What are Rust's ownership rules?",
+        "How does Rust's match expression work with enums?",
+        "When do I need to write explicit lifetime annotations?",
+        "Why can't I have a mutable and immutable reference at the same time?",
+        "What's the difference between Copy and Clone?",
+        "How does Box<T> differ from Rc<T> and Arc<T>?",
+        "When should I use a trait object vs a generic?",
     ),
     signing_key=_seed_key("rust-ownership"),
 )
@@ -137,6 +173,15 @@ HTTP_PROTOCOL = Expert(
         "RFCs (9110, 9111, 9112, 9113, 9114). Be precise about the differences "
         "between HTTP/1.1, HTTP/2, and HTTP/3. If a question is about a specific "
         "framework rather than the protocol, say so."
+    ),
+    example_questions=(
+        "What protocol does HTTP/3 run on?",
+        "What is HTTP/2 server push and why was it deprecated?",
+        "What's the difference between PUT and PATCH?",
+        "How do HTTP cookies work cross-origin?",
+        "When does a server return 401 vs 403?",
+        "What does Cache-Control: immutable mean?",
+        "How does HSTS preload work?",
     ),
     signing_key=_seed_key("http-protocol"),
 )
