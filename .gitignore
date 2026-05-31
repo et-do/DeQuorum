@@ -182,3 +182,4 @@ cython_debug/
 # ai_playground local CLI state
 .ai_playground.db
 .ai_playground.db-journal
+.claude/settings.local.json

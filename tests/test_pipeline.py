@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from ai_playground.base_model import MockBaseModel
-from ai_playground.contribution_store import ContributionStore
+from ai_playground.contribution_store import STATUS_APPROVED, ContributionStore
 from ai_playground.contributions import Contribution
 from ai_playground.core.errors import CompositionError
 from ai_playground.experts import Expert, ExpertRegistry
@@ -42,10 +42,17 @@ def test_single_expert_query_returns_proof() -> None:
     assert response.final_answer == response.expert_answers[0].answer
 
 
-def test_multi_expert_query_combines_answers() -> None:
-    p = _pipeline(
-        _expert("py", ("python",)),
-        _expert("rs", ("rust",)),
+def test_multi_expert_concat_strategy() -> None:
+    from ai_playground.composition import ConcatStrategy
+
+    reg = ExpertRegistry()
+    reg.register(_expert("py", ("python",)))
+    reg.register(_expert("rs", ("rust",)))
+    p = Pipeline(
+        router=KeywordRouter(reg),
+        model=MockBaseModel(),
+        composition=ConcatStrategy(),
+        top_k=3,
     )
     response = p.query("python vs rust ownership")
     expert_ids = {a.expert.expert_id for a in response.expert_answers}
@@ -53,6 +60,28 @@ def test_multi_expert_query_combines_answers() -> None:
     assert "Py" in response.final_answer
     assert "Rs" in response.final_answer
     assert "---" in response.final_answer
+    assert response.composition.strategy == "concat"
+
+
+def test_pick_best_strategy_returns_single_answer() -> None:
+    reg = ExpertRegistry()
+    reg.register(_expert("py", ("python",)))
+    reg.register(_expert("rs", ("rust",)))
+    p = Pipeline(
+        router=KeywordRouter(reg),
+        model=MockBaseModel(),
+        top_k=3,
+    )  # default is PickBest
+    response = p.query("python vs rust ownership")
+    # Both experts were consulted (two routing matches, equal score)
+    assert len(response.expert_answers) == 2
+    # But only one answer wins
+    assert len(response.composition.chosen) == 1
+    chosen_id = response.composition.chosen[0]
+    chosen_answer = next(
+        a for a in response.expert_answers if a.expert.expert_id == chosen_id
+    )
+    assert response.final_answer == chosen_answer.answer
 
 
 def test_ledger_credits_each_consulted_expert() -> None:
@@ -83,7 +112,7 @@ def test_no_experts_raises_composition_error() -> None:
         router=KeywordRouter(ExpertRegistry(), fallback_to_all=False),
         model=MockBaseModel(),
     )
-    with pytest.raises(CompositionError, match="no experts"):
+    with pytest.raises(CompositionError, match="no qualified expert"):
         p.query("anything")
 
 
@@ -135,7 +164,10 @@ def _pipeline_with_retrieval(*experts: Expert, store: ContributionStore) -> Pipe
 
 def test_retrieval_appends_contribution_signatures_to_chain() -> None:
     store = ContributionStore()
-    store.add(_contribution("py", "Typing a generator uses Generator[Y, S, R]"))
+    store.add(
+        _contribution("py", "Typing a generator uses Generator[Y, S, R]"),
+        status=STATUS_APPROVED,
+    )
     p = _pipeline_with_retrieval(_expert("py", ("python",)), store=store)
     response = p.query("python typing generator")
     assert len(response.proof.chain) == 2  # 1 contribution sig + 1 expert sig
@@ -147,8 +179,8 @@ def test_retrieval_appends_contribution_signatures_to_chain() -> None:
 
 def test_ledger_credits_contributors_in_addition_to_experts() -> None:
     store = ContributionStore()
-    store.add(_contribution("py", "fact A about typing"))
-    store.add(_contribution("py", "fact B about typing"))
+    store.add(_contribution("py", "fact A about typing"), status=STATUS_APPROVED)
+    store.add(_contribution("py", "fact B about typing"), status=STATUS_APPROVED)
     p = _pipeline_with_retrieval(_expert("py", ("python",)), store=store)
     p.query("python typing")
     totals = p.ledger.totals()
@@ -158,7 +190,7 @@ def test_ledger_credits_contributors_in_addition_to_experts() -> None:
 
 def test_retrieval_with_no_matching_contributions_is_graceful() -> None:
     store = ContributionStore()
-    store.add(_contribution("py", "completely unrelated text"))
+    store.add(_contribution("py", "completely unrelated text"), status=STATUS_APPROVED)
     p = _pipeline_with_retrieval(_expert("py", ("python",)), store=store)
     # query has no token overlap with contribution → no retrieval, no augmentation
     response = p.query("python")
@@ -169,7 +201,7 @@ def test_retrieval_with_no_matching_contributions_is_graceful() -> None:
 def test_retrieved_attached_to_expert_answer() -> None:
     store = ContributionStore()
     c = _contribution("py", "typing fact one")
-    store.add(c)
+    store.add(c, status=STATUS_APPROVED)
     p = _pipeline_with_retrieval(_expert("py", ("python",)), store=store)
     response = p.query("python typing")
     assert len(response.expert_answers) == 1

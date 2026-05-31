@@ -30,7 +30,7 @@ def test_routes_to_matching_expert() -> None:
     )
     result = KeywordRouter(reg).route("how do I add types to a python function?")
     assert result.fallback_used is False
-    assert tuple(e.expert_id for e in result.selected) == ("py",)
+    assert tuple(s.expert.expert_id for s in result.selected) == ("py",)
     assert "python" in result.matched_tags
 
 
@@ -40,7 +40,7 @@ def test_ranks_by_overlap_count() -> None:
         _expert("b", ("python", "typing", "annotations")),
     )
     result = KeywordRouter(reg).route("python typing annotations", top_k=2)
-    assert tuple(e.expert_id for e in result.selected) == ("b", "a")
+    assert tuple(s.expert.expert_id for s in result.selected) == ("b", "a")
 
 
 def test_top_k_limits_results() -> None:

@@ -1,10 +1,16 @@
-"""End-to-end pipeline: route → retrieve → invoke experts → combine → credit."""
+"""End-to-end pipeline: route → retrieve → invoke experts → compose → credit."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
 from ai_playground.base_model import BaseModel
+from ai_playground.composition import (
+    CompositionResult,
+    CompositionStrategy,
+    PickBestStrategy,
+)
 from ai_playground.contributions import Contribution
 from ai_playground.core.errors import CompositionError
 from ai_playground.core.ledger import AttributionLedger
@@ -12,7 +18,13 @@ from ai_playground.core.node import Signature
 from ai_playground.core.proof import ProofObject
 from ai_playground.experts import Expert
 from ai_playground.retrieval import Retriever, ScoredContribution
-from ai_playground.router import KeywordRouter, RoutingResult
+from ai_playground.router import RoutingResult
+
+
+class Router(Protocol):
+    method: str
+
+    def route(self, query: str, top_k: int = 3) -> RoutingResult: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +33,7 @@ class ExpertAnswer:
     answer: str
     signature: Signature
     retrieved: tuple[ScoredContribution, ...]
+    routing_score: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,8 +41,12 @@ class NetworkResponse:
     query: str
     routing: RoutingResult
     expert_answers: tuple[ExpertAnswer, ...]
-    final_answer: str
+    composition: CompositionResult
     proof: ProofObject
+
+    @property
+    def final_answer(self) -> str:
+        return self.composition.text
 
 
 def _augment_system_prompt(
@@ -51,25 +68,16 @@ def _augment_system_prompt(
     return "\n".join(lines)
 
 
-def _combine_answers(answers: tuple[ExpertAnswer, ...]) -> str:
-    if len(answers) == 1:
-        return answers[0].answer
-    sections = [
-        f"### {a.expert.display_name} ({a.expert.expert_id})\n\n{a.answer}"
-        for a in answers
-    ]
-    return "\n\n---\n\n".join(sections)
-
-
 class Pipeline:
     """Wires routing, retrieval, expert invocation, attribution, and ledger credits."""
 
     def __init__(
         self,
-        router: KeywordRouter,
+        router: Router,
         model: BaseModel,
         ledger: AttributionLedger | None = None,
         retriever: Retriever | None = None,
+        composition: CompositionStrategy | None = None,
         *,
         top_k: int = 3,
         retrieve_top_k: int = 3,
@@ -78,12 +86,17 @@ class Pipeline:
         self._model = model
         self._ledger = ledger or AttributionLedger()
         self._retriever = retriever
+        self._composition = composition or PickBestStrategy()
         self._top_k = top_k
         self._retrieve_top_k = retrieve_top_k
 
     @property
     def ledger(self) -> AttributionLedger:
         return self._ledger
+
+    @property
+    def composition(self) -> CompositionStrategy:
+        return self._composition
 
     def query(self, q: str) -> NetworkResponse:
         if not q.strip():
@@ -92,12 +105,14 @@ class Pipeline:
         routing = self._router.route(q, top_k=self._top_k)
         if not routing.selected:
             raise CompositionError(
-                "no experts available — register one or enable router fallback"
+                "no qualified expert above the routing threshold "
+                "— register a relevant expert or lower the threshold"
             )
 
         chain: list[Signature] = []
         answers: list[ExpertAnswer] = []
-        for expert in routing.selected:
+        for sel in routing.selected:
+            expert = sel.expert
             retrieved: tuple[ScoredContribution, ...] = ()
             if self._retriever is not None:
                 retrieved = tuple(
@@ -122,17 +137,18 @@ class Pipeline:
                     answer=text,
                     signature=expert_sig,
                     retrieved=retrieved,
+                    routing_score=sel.score,
                 )
             )
 
-        final = _combine_answers(tuple(answers))
-        proof = ProofObject(output=final, chain=tuple(chain))
+        composition_result = self._composition.compose(tuple(answers))
+        proof = ProofObject(output=composition_result.text, chain=tuple(chain))
         self._ledger.credit(proof)
 
         return NetworkResponse(
             query=q,
             routing=routing,
             expert_answers=tuple(answers),
-            final_answer=final,
+            composition=composition_result,
             proof=proof,
         )

@@ -6,7 +6,7 @@ In production, real contributors submit these themselves via the `submit` CLI.
 
 from __future__ import annotations
 
-from ai_playground.contribution_store import ContributionStore
+from ai_playground.contribution_store import STATUS_APPROVED, ContributionStore
 from ai_playground.contributions import Contribution
 from ai_playground.seed_experts import (
     HTTP_PROTOCOL,
@@ -221,8 +221,8 @@ def seed_contributions() -> list[Contribution]:
 
 
 def populate(store: ContributionStore) -> int:
-    """Insert all seed contributions into the store. Returns the count added."""
+    """Insert all seed contributions as pre-approved. Returns the count added."""
     contribs = seed_contributions()
     for c in contribs:
-        store.add(c)
+        store.add(c, status=STATUS_APPROVED)
     return len(contribs)

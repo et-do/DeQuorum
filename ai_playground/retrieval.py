@@ -12,7 +12,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 
-from ai_playground.contribution_store import ContributionStore
+from ai_playground.contribution_store import STATUS_APPROVED, ContributionStore
 from ai_playground.contributions import Contribution
 
 _TOKEN_RE = re.compile(r"[a-z0-9_]+")
@@ -101,10 +101,13 @@ class BM25Index:
 
 
 class Retriever:
-    """Per-expert BM25 retrieval. Rebuilds the index lazily on first query."""
+    """Per-expert BM25 retrieval. Only returns peer-approved contributions."""
 
-    def __init__(self, store: ContributionStore) -> None:
+    def __init__(
+        self, store: ContributionStore, *, status: str = STATUS_APPROVED
+    ) -> None:
         self._store = store
+        self._status = status
         self._cache: dict[str, BM25Index] = {}
 
     def invalidate(self, expert_id: str | None = None) -> None:
@@ -120,6 +123,6 @@ class Retriever:
             raise ValueError(f"top_k must be >= 1, got {top_k}")
         if expert_id not in self._cache:
             self._cache[expert_id] = BM25Index.build(
-                self._store.list_for_expert(expert_id)
+                self._store.list_for_expert(expert_id, status=self._status)
             )
         return self._cache[expert_id].rank(query, top_k)

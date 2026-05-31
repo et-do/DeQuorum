@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Contribution &middot; ai-playground{% endblock %}
+{% block content %}
+<a href="/contributions" class="text-sm text-indigo-600 hover:underline">&larr; all contributions</a>
+
+<div class="bg-white border border-slate-200 rounded-lg p-5 mt-3">
+  <div class="flex items-baseline justify-between gap-3 flex-wrap">
+    <div>
+      <h1 class="text-xl font-bold">{{ c.expert_id }}</h1>
+      <div class="mono text-xs text-slate-500">contributed by {{ c.contributor_id }}</div>
+    </div>
+    <div class="flex items-center gap-2">
+      {% if status == STATUS_APPROVED %}
+      <span class="badge bg-green-100 text-green-800">approved</span>
+      {% elif status == STATUS_REJECTED %}
+      <span class="badge bg-red-100 text-red-800">rejected</span>
+      {% else %}
+      <span class="badge bg-amber-100 text-amber-800">pending</span>
+      {% endif %}
+      <span class="badge bg-slate-100 text-slate-700">tally {{ "%+d"|format(tally) }}</span>
+    </div>
+  </div>
+
+  <p class="text-slate-800 leading-relaxed mt-4">{{ c.text }}</p>
+
+  {% if c.citations %}
+  <div class="mt-4">
+    <div class="text-xs uppercase tracking-wide text-slate-500 mb-1">citations</div>
+    <ul class="list-disc list-inside text-sm space-y-1">
+      {% for url in c.citations %}
+      <li><a href="{{ url }}" target="_blank" rel="noopener" class="text-indigo-600 hover:underline break-all">{{ url }}</a></li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <details class="mt-4 text-sm">
+    <summary class="cursor-pointer text-slate-600">signature</summary>
+    <div class="mono text-xs text-slate-500 mt-2 space-y-1">
+      <div>id: {{ c.contribution_id }}</div>
+      <div>node: {{ c.signature.node_id }}</div>
+      <div>digest: {{ c.signature.digest }}</div>
+    </div>
+  </details>
+</div>
+
+<div class="bg-white border border-slate-200 rounded-lg p-5 mt-6">
+  <h2 class="text-lg font-semibold mb-3">Cast a vote</h2>
+  {% if status != STATUS_PENDING %}
+  <p class="text-sm text-slate-500 mb-3">This contribution has reached a terminal status. Voting still records, but won't change the outcome unless tally re-crosses a threshold.</p>
+  {% endif %}
+  <form method="post" action="/contributions/{{ c.contribution_id }}/vote" class="flex flex-wrap items-end gap-3">
+    <input type="hidden" name="next_url" value="/contributions/{{ c.contribution_id }}">
+    <label class="text-sm">
+      <span class="block text-slate-600 mb-1">as expert</span>
+      <select name="voter_id" required class="border border-slate-300 rounded px-2 py-1">
+        {% for e in experts %}
+        {% if e.expert_id != c.contributor_id %}
+        <option value="{{ e.expert_id }}">{{ e.expert_id }}</option>
+        {% endif %}
+        {% endfor %}
+      </select>
+    </label>
+    <label class="text-sm">
+      <span class="block text-slate-600 mb-1">score</span>
+      <select name="score" class="border border-slate-300 rounded px-2 py-1">
+        <option value="1">+1 (approve)</option>
+        <option value="0">0 (abstain)</option>
+        <option value="-1">-1 (reject)</option>
+      </select>
+    </label>
+    <button type="submit" class="bg-indigo-600 text-white rounded px-3 py-1.5 text-sm hover:bg-indigo-700">cast vote</button>
+  </form>
+</div>
+
+<div class="bg-white border border-slate-200 rounded-lg p-5 mt-6">
+  <h2 class="text-lg font-semibold mb-3">Vote history ({{ votes|length }})</h2>
+  {% if votes %}
+  <ul class="divide-y divide-slate-100 text-sm">
+    {% for v in votes %}
+    <li class="py-2 flex justify-between">
+      <span class="mono">{{ v.voter_id }}</span>
+      <span class="mono">{{ "%+d"|format(v.score) }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="text-sm text-slate-500">No votes yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

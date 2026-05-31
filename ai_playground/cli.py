@@ -10,14 +10,22 @@ from dataclasses import asdict
 from pathlib import Path
 
 from ai_playground.base_model import MockBaseModel, OllamaBaseModel
-from ai_playground.contribution_store import ContributionStore
+from ai_playground.composition import make_strategy
+from ai_playground.contribution_store import (
+    STATUS_PENDING,
+    VALID_STATUSES,
+    ContributionStore,
+)
 from ai_playground.contributions import Contribution
 from ai_playground.core.errors import CompositionError
 from ai_playground.core.ledger import AttributionLedger
+from ai_playground.embedder import SentenceTransformerEmbedder
 from ai_playground.expert_network.pipeline import diagnose
+from ai_playground.experts import ExpertRegistry
 from ai_playground.pipeline import Pipeline
 from ai_playground.retrieval import Retriever
-from ai_playground.router import KeywordRouter
+from ai_playground.review import ReviewService
+from ai_playground.router import EmbeddingRouter, KeywordRouter
 from ai_playground.seed_contributions import populate as populate_seed_contributions
 from ai_playground.seed_experts import build_seed_registry
 
@@ -46,9 +54,29 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable contribution retrieval (compare with Week 1 behavior)",
     )
+    query.add_argument(
+        "--router",
+        choices=("keyword", "embedding"),
+        default="embedding",
+        help="Routing strategy. 'embedding' is semantic; 'keyword' is the baseline.",
+    )
+    query.add_argument(
+        "--min-score",
+        type=float,
+        default=None,
+        help="Override the router's min-score threshold for selecting an expert",
+    )
+    query.add_argument(
+        "--compose",
+        choices=("pick_best", "concat"),
+        default="pick_best",
+        help="How to combine N expert answers into the final response",
+    )
     query.add_argument("--db", default=DEFAULT_DB, help="Contribution DB path")
 
-    submit = sub.add_parser("submit", help="Submit a signed contribution")
+    submit = sub.add_parser(
+        "submit", help="Submit a signed contribution (pending review)"
+    )
     submit.add_argument("--as", dest="expert_id", required=True, help="Expert id")
     submit.add_argument("--text", required=True, help="The factual claim")
     submit.add_argument(
@@ -56,13 +84,46 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     submit.add_argument("--db", default=DEFAULT_DB)
 
+    vote = sub.add_parser("vote", help="Cast a signed vote on a contribution")
+    vote.add_argument("--as", dest="voter_id", required=True, help="Voter expert id")
+    vote.add_argument(
+        "--contribution", required=True, help="Contribution id (or prefix)"
+    )
+    vote.add_argument(
+        "--score", type=int, required=True, choices=[-1, 0, 1], help="-1, 0, or 1"
+    )
+    vote.add_argument("--db", default=DEFAULT_DB)
+
     list_c = sub.add_parser(
-        "list-contributions", help="List stored contributions, optionally filtered"
+        "list-contributions", help="List stored contributions with status + tally"
     )
     list_c.add_argument("--expert", default=None, help="Filter by expert id")
+    list_c.add_argument(
+        "--status",
+        choices=sorted(VALID_STATUSES),
+        default=None,
+        help="Filter by status",
+    )
     list_c.add_argument("--db", default=DEFAULT_DB)
 
+    review = sub.add_parser("review", help="Show pending contributions awaiting votes")
+    review.add_argument("--db", default=DEFAULT_DB)
+
     sub.add_parser("list-experts", help="Print the seed expert registry")
+
+    serve = sub.add_parser("serve", help="Run the FastAPI web UI")
+    serve.add_argument("--host", default="0.0.0.0", help="Bind host")
+    serve.add_argument("--port", type=int, default=8000, help="Bind port")
+    serve.add_argument("--db", default=DEFAULT_DB)
+    serve.add_argument("--mock", action="store_true", help="Use mock model")
+    serve.add_argument(
+        "--router", choices=("keyword", "embedding"), default="embedding"
+    )
+    serve.add_argument("--min-score", type=float, default=None)
+    serve.add_argument(
+        "--compose", choices=("pick_best", "concat"), default="pick_best"
+    )
+    serve.add_argument("--reload", action="store_true", help="Auto-reload on edits")
 
     return parser
 
@@ -74,6 +135,18 @@ def _open_store(path: str) -> ContributionStore:
     if is_new and len(store) == 0:
         populate_seed_contributions(store)
     return store
+
+
+def _resolve_contribution_id(store: ContributionStore, prefix: str) -> str | None:
+    """Allow short prefixes for CLI ergonomics."""
+    if store.get(prefix) is not None:
+        return prefix
+    matches = [c.contribution_id for c in store if c.contribution_id.startswith(prefix)]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise CompositionError(f"ambiguous contribution prefix {prefix!r}: {matches}")
+    return None
 
 
 def _cmd_demo(args: argparse.Namespace) -> int:
@@ -97,9 +170,20 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_router(
+    registry: ExpertRegistry, kind: str, min_score: float | None
+) -> EmbeddingRouter | KeywordRouter:
+    if kind == "embedding":
+        embedder = SentenceTransformerEmbedder()
+        threshold = 0.25 if min_score is None else min_score
+        return EmbeddingRouter(registry, embedder, min_score=threshold)
+    threshold = 1.0 if min_score is None else min_score
+    return KeywordRouter(registry, min_score=threshold)
+
+
 def _cmd_query(args: argparse.Namespace) -> int:
     registry = build_seed_registry()
-    router = KeywordRouter(registry)
+    router = _build_router(registry, args.router, args.min_score)
     model: MockBaseModel | OllamaBaseModel = (
         MockBaseModel()
         if args.mock
@@ -116,6 +200,7 @@ def _cmd_query(args: argparse.Namespace) -> int:
         router=router,
         model=model,
         retriever=retriever,
+        composition=make_strategy(args.compose),
         top_k=args.top_k,
         retrieve_top_k=args.retrieve_top_k,
     )
@@ -135,11 +220,16 @@ def _cmd_query(args: argparse.Namespace) -> int:
             "method": response.routing.method,
             "matched_tags": list(response.routing.matched_tags),
             "fallback_used": response.routing.fallback_used,
-            "selected": [e.expert_id for e in response.routing.selected],
+            "threshold": response.routing.threshold,
+            "selected": [
+                {"expert_id": s.expert.expert_id, "score": round(s.score, 4)}
+                for s in response.routing.selected
+            ],
         },
         "experts": [
             {
                 "expert_id": a.expert.expert_id,
+                "routing_score": round(a.routing_score, 4),
                 "answer": a.answer,
                 "signature": asdict(a.signature),
                 "retrieved": [
@@ -155,6 +245,10 @@ def _cmd_query(args: argparse.Namespace) -> int:
             }
             for a in response.expert_answers
         ],
+        "composition": {
+            "strategy": response.composition.strategy,
+            "chosen": list(response.composition.chosen),
+        },
         "final_answer": response.final_answer,
         "ledger": pipeline.ledger.totals(),
     }
@@ -178,7 +272,7 @@ def _cmd_submit(args: argparse.Namespace) -> int:
         signing_key=expert.signing_key,
     )
     with _open_store(args.db) as store:
-        store.add(contribution)
+        store.add(contribution, status=STATUS_PENDING)
         total = len(store)
 
     print(
@@ -186,6 +280,7 @@ def _cmd_submit(args: argparse.Namespace) -> int:
             {
                 "contribution_id": contribution.contribution_id,
                 "expert_id": contribution.expert_id,
+                "status": STATUS_PENDING,
                 "signature": asdict(contribution.signature),
                 "store_total": total,
                 "db": args.db,
@@ -196,18 +291,81 @@ def _cmd_submit(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_vote(args: argparse.Namespace) -> int:
+    registry = build_seed_registry()
+    if args.voter_id not in registry:
+        print(
+            json.dumps({"error": f"unknown voter expert: {args.voter_id!r}"}, indent=2)
+        )
+        return 1
+
+    with _open_store(args.db) as store:
+        try:
+            cid = _resolve_contribution_id(store, args.contribution)
+        except CompositionError as exc:
+            print(json.dumps({"error": str(exc)}, indent=2))
+            return 1
+        if cid is None:
+            print(
+                json.dumps(
+                    {"error": f"no contribution matches {args.contribution!r}"},
+                    indent=2,
+                )
+            )
+            return 1
+
+        service = ReviewService(store, registry=registry)
+        try:
+            outcome = service.cast_vote(
+                contribution_id=cid, voter_id=args.voter_id, score=args.score
+            )
+        except CompositionError as exc:
+            print(json.dumps({"error": str(exc)}, indent=2))
+            return 1
+
+    print(json.dumps(asdict(outcome), indent=2))
+    return 0
+
+
 def _cmd_list_contributions(args: argparse.Namespace) -> int:
     with _open_store(args.db) as store:
-        contribs = (
-            store.list_for_expert(args.expert) if args.expert else list(iter(store))
-        )
+        if args.expert:
+            contribs = store.list_for_expert(args.expert, status=args.status)
+        elif args.status:
+            contribs = store.list_by_status(args.status)
+        else:
+            contribs = list(iter(store))
         payload = [
             {
                 "contribution_id": c.contribution_id,
                 "expert_id": c.expert_id,
                 "contributor_id": c.contributor_id,
+                "status": store.get_status(c.contribution_id),
+                "tally": store.vote_tally(c.contribution_id),
                 "text": c.text,
                 "citations": list(c.citations),
+            }
+            for c in contribs
+        ]
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def _cmd_review(args: argparse.Namespace) -> int:
+    with _open_store(args.db) as store:
+        contribs = store.list_by_status(STATUS_PENDING)
+        payload = [
+            {
+                "contribution_id": c.contribution_id,
+                "expert_id": c.expert_id,
+                "contributor_id": c.contributor_id,
+                "tally": store.vote_tally(c.contribution_id),
+                "text": c.text,
+                "citations": list(c.citations),
+                "votes": [
+                    {"voter_id": v.voter_id, "score": v.score}
+                    for v in store.votes_for(c.contribution_id)
+                ],
             }
             for c in contribs
         ]
@@ -230,6 +388,23 @@ def _cmd_list_experts(_: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from ai_playground.web.app import configure_app, create_app
+
+    configure_app(
+        db_path=args.db,
+        use_mock=args.mock,
+        router=args.router,
+        min_score=args.min_score,
+        composition=args.compose,
+    )
+    app = create_app()
+    uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.cmd == "demo":
@@ -238,10 +413,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_query(args)
     if args.cmd == "submit":
         return _cmd_submit(args)
+    if args.cmd == "vote":
+        return _cmd_vote(args)
     if args.cmd == "list-contributions":
         return _cmd_list_contributions(args)
+    if args.cmd == "review":
+        return _cmd_review(args)
     if args.cmd == "list-experts":
         return _cmd_list_experts(args)
+    if args.cmd == "serve":
+        return _cmd_serve(args)
     return 2
 
 

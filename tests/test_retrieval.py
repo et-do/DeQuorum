@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from ai_playground.contribution_store import ContributionStore
+from ai_playground.contribution_store import STATUS_APPROVED, ContributionStore
 from ai_playground.contributions import Contribution
 from ai_playground.retrieval import BM25Index, Retriever
 
@@ -44,8 +44,8 @@ def test_bm25_drops_zero_score_documents() -> None:
 
 def test_retriever_caches_per_expert() -> None:
     store = ContributionStore()
-    store.add(_c("py", "python typing fact"))
-    store.add(_c("rs", "rust ownership fact"))
+    store.add(_c("py", "python typing fact"), status=STATUS_APPROVED)
+    store.add(_c("rs", "rust ownership fact"), status=STATUS_APPROVED)
     r = Retriever(store)
     py_results = r.retrieve("typing", "py", top_k=3)
     assert len(py_results) == 1
@@ -55,11 +55,11 @@ def test_retriever_caches_per_expert() -> None:
 
 def test_retriever_invalidate_refreshes_after_new_contribution() -> None:
     store = ContributionStore()
-    store.add(_c("py", "original fact about typing"))
+    store.add(_c("py", "original fact about typing"), status=STATUS_APPROVED)
     r = Retriever(store)
     assert len(r.retrieve("typing", "py", top_k=3)) == 1
 
-    store.add(_c("py", "second typing fact"))
+    store.add(_c("py", "second typing fact"), status=STATUS_APPROVED)
     # without invalidation, still uses cached index (1 doc)
     assert len(r.retrieve("typing", "py", top_k=3)) == 1
     r.invalidate("py")
