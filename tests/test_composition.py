@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from dequorum.composition import (
+from dequorum.core.node import Signature
+from dequorum.experts import Expert
+from dequorum.inference.composition import (
     STRATEGIES,
     ConcatStrategy,
     PickBestStrategy,
     make_strategy,
 )
-from dequorum.core.node import Signature
-from dequorum.experts import Expert
-from dequorum.pipeline import ExpertAnswer
+from dequorum.inference.pipeline import ExpertAnswer
 from dequorum.retrieval import ScoredContribution
 
 

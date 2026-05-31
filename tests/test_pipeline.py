@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from dequorum.base_model import MockBaseModel
-from dequorum.contribution_store import STATUS_APPROVED, ContributionStore
-from dequorum.contributions import Contribution
 from dequorum.core.errors import CompositionError
 from dequorum.experts import Expert, ExpertRegistry
-from dequorum.pipeline import Pipeline
+from dequorum.inference.base_model import MockBaseModel
+from dequorum.inference.pipeline import Pipeline
+from dequorum.knowledge.contribution import Contribution
+from dequorum.knowledge.store import STATUS_APPROVED, ContributionStore
 from dequorum.retrieval import Retriever
-from dequorum.router import KeywordRouter
+from dequorum.routing import KeywordRouter
 
 
 def _expert(eid: str, tags: tuple[str, ...]) -> Expert:
@@ -43,7 +43,7 @@ def test_single_expert_query_returns_proof() -> None:
 
 
 def test_multi_expert_concat_strategy() -> None:
-    from dequorum.composition import ConcatStrategy
+    from dequorum.inference.composition import ConcatStrategy
 
     reg = ExpertRegistry()
     reg.register(_expert("py", ("python",)))
@@ -129,7 +129,7 @@ def test_proof_chain_is_signed_per_expert() -> None:
 
 
 def test_seed_registry_smoke() -> None:
-    from dequorum.seed_experts import build_seed_registry
+    from dequorum.experts.seeds import build_seed_registry
 
     reg = build_seed_registry()
     assert len(reg) >= 5

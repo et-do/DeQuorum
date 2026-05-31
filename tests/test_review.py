@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from dequorum.contribution_store import (
+from dequorum.core.errors import CompositionError
+from dequorum.knowledge.contribution import Contribution
+from dequorum.knowledge.store import (
     STATUS_APPROVED,
     STATUS_PENDING,
     STATUS_REJECTED,
     ContributionStore,
 )
-from dequorum.contributions import Contribution
-from dequorum.core.errors import CompositionError
-from dequorum.review import ReviewService
+from dequorum.review.service import ReviewService
 
 
 def _c(expert_id: str = "py", contributor_id: str = "py") -> Contribution:

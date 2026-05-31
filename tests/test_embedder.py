@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from dequorum.embedder import HashEmbedder, cosine_sim
+from dequorum.routing.embedder import HashEmbedder, cosine_sim
 
 
 def test_hash_embedder_is_deterministic() -> None:

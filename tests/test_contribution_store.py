@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from dequorum.contribution_store import ContributionStore
-from dequorum.contributions import Contribution
+from dequorum.knowledge.contribution import Contribution
+from dequorum.knowledge.store import ContributionStore
 
 
 def _c(expert: str, text: str) -> Contribution:

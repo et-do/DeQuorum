@@ -4,11 +4,18 @@
 
 ## 1. What this system is
 
-A **decentralized, peer-reviewed, attributable AI network** where any user — individual or organization, credentialed or not — can submit signed factual claims about anything they know. Other users vote on whether each claim is correct. The voting outcome (not credentials) decides what the AI is allowed to draw on. When someone asks a question, the network routes it to relevant approved knowledge, generates an answer using only that knowledge, and signs every step of the reasoning chain so the answer is verifiable end-to-end. Contributors get paid every time their knowledge shapes an answer.
+**The first crowdsourced, user-owned, kickback-paying AI for the masses.**
 
-One-liner: **Wikipedia × Stack Overflow × an LLM that pays its sources, run on Mastodon-style federated infrastructure.**
+DeQuorum is what you get when you build a ChatGPT or Gemini that's **owned by its users instead of by a tech giant**. Anyone — individual or organization, credentialed or not — can submit signed factual claims about anything they know. Other users vote on whether each claim is correct. The voting outcome (not credentials, not the platform operator) decides what the AI is allowed to draw on. When someone asks a question, the network routes it to relevant approved knowledge, generates an answer using only that knowledge, and signs every step of the reasoning chain so the answer is verifiable end-to-end. **Every time your knowledge shapes an answer, you get paid.**
 
-The name DeQuorum = decentralized + quorum (the voting body that decides what's accepted).
+The thesis: today, three tech giants own the AI infrastructure, the training data (often scraped from the rest of us), and all the profits. DeQuorum puts those three things back into users' hands — **you contribute the knowledge, you verify each other's claims, you host the compute, and you take the revenue share.** The platform operator is a coordinator, not a kingmaker.
+
+One-liners we like, pick your favorite:
+- *"ChatGPT, but you own it and you get paid."*
+- *"Wikipedia × Stack Overflow × an LLM that pays its sources, run on Mastodon-style federated infrastructure."*
+- *"Democratizing AI: contribution, training, serving, inference, and revenue, all crowdsourced."*
+
+The name **DeQuorum** = decentralized + quorum (the voting body that decides what's accepted).
 
 ## 2. The problem we're solving
 
@@ -95,16 +102,23 @@ Gross revenue from each query is split by attribution:
 
 Tunable as we learn. The principle: contributors get the largest single slice.
 
-## 7. What we are explicitly **not** trying to be
+## 7. What we refuse to do
 
-- Not a general-purpose ChatGPT replacement for every use case. We're a credible answer when you specifically need verifiability + attribution.
-- Not a Stack Overflow replacement. They're a Q&A archive; we synthesize fresh answers and pay sources.
-- Not a Wikipedia replacement. They're long-form articles; we work in atomic, citable facts.
-- Not a blockchain or token-speculation vehicle. Kickbacks are real money (Stripe ACH). Crypto is an option later if useful, not a fundraising mechanism.
-- Not training our own base model in v0.1. We use Qwen 2.5 Coder 7B (Apache 2.0). Differentiated training is years 2–3.
-- Not a contributor lottery. Top contributors can earn meaningful income; no one gets rich.
-- Not a single hosted SaaS. Self-hosting is a first-class option from day 1; federation by v1.0.
-- Not locked to any single domain — the v0.1 demo happens to be seeded with OSS code knowledge, but the architecture is content-agnostic.
+DeQuorum is, deliberately, a direct alternative to ChatGPT, Gemini, Claude, and Copilot — the goal is to be everything those products are, except owned by users instead of by tech giants. These are the practices of the incumbents that we won't replicate:
+
+- **We won't hide our sources.** Every answer ships with a signed, independently verifiable chain showing exactly which contributors shaped it. No "trust me, I'm an AI."
+- **We won't hallucinate to fill the gap.** When no qualified expert has spoken on a topic, the system says so plainly instead of confabulating. Refusal-over-guessing is a feature, not a limitation.
+- **We won't extract value from contributors without paying them back.** Every cent of revenue is split by attribution: contributors, reviewers, compute hosts, operator, treasury. The default split gives the largest slice (50%) to the people whose knowledge made the answer possible.
+- **We won't centralize ownership.** The code is open source, anyone can self-host, and federation across instances is built in from v1.0. No single operator (including us) can pull the rug.
+- **We won't gate participation behind credentials.** Anyone can submit; voting decides. Credentials are reputation signals, never permission slips.
+- **We won't make decisions in a back room.** Truth is decided by the voting body, with public audit trails on every vote.
+- **We won't speculate on tokens to fund ourselves.** Kickbacks are real money (Stripe ACH, eventually). If a token model ever ships, it's a utility within the network, not a fundraising mechanism.
+- **We won't pretend the v0.1 demo defines the product.** The seed content happens to be OSS code knowledge because that's what existed when we built the demo. The architecture is fully content-agnostic — medical knowledge, history, cooking, scientific literature, all welcome from day one.
+
+What we *do* concede (for now, not forever):
+
+- We don't train our own base model yet — we use Qwen 2.5 Coder 7B (Apache 2.0). Differentiated training comes in years 2–3 once aggregated approved contributions justify it.
+- We're not a contributor lottery. Top contributors can earn meaningful recurring income; no one gets rich on a single contribution.
 
 ## 8. Differentiation
 

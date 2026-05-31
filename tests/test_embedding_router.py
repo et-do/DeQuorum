@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dequorum.embedder import HashEmbedder
 from dequorum.experts import Expert, ExpertRegistry
-from dequorum.router import EmbeddingRouter
+from dequorum.routing import EmbeddingRouter
+from dequorum.routing.embedder import HashEmbedder
 
 
 def _expert(eid: str, prompt: str, tags: tuple[str, ...] = ()) -> Expert:

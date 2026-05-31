@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from dequorum.contribution_store import STATUS_APPROVED, ContributionStore
-from dequorum.contributions import Contribution
+from dequorum.knowledge.contribution import Contribution
+from dequorum.knowledge.store import STATUS_APPROVED, ContributionStore
 from dequorum.retrieval import BM25Index, Retriever
 
 

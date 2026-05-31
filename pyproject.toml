@@ -102,7 +102,7 @@ plugins = ["pydantic.mypy"]
 
 
 [tool.hatch.build.targets.wheel]
-packages = ["dequorum"]
+packages = ["src/dequorum"]
 
 [build-system]
 requires = ["hatchling"]

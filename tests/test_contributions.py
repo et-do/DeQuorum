@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dequorum.contributions import Contribution
+from dequorum.knowledge.contribution import Contribution
 
 
 def _make(text: str = "asyncio.create_task schedules onto a loop") -> Contribution:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from dequorum.experts import Expert, ExpertRegistry
-from dequorum.router import KeywordRouter
+from dequorum.routing import KeywordRouter
 
 
 def _expert(eid: str, tags: tuple[str, ...]) -> Expert:
