@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from ai_playground.experts import Expert, ExpertRegistry
-from ai_playground.router import KeywordRouter
+from dequorum.experts import Expert, ExpertRegistry
+from dequorum.router import KeywordRouter
 
 
 def _expert(eid: str, tags: tuple[str, ...]) -> Expert:

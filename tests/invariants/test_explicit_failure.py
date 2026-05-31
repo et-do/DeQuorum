@@ -6,10 +6,10 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from ai_playground.core.errors import CompositionError, MissingData
-from ai_playground.expert_network.nodes import ChemicalNode
-from ai_playground.expert_network.pipeline import diagnose
-from ai_playground.graph.routing import KnowledgeGraph
+from dequorum.core.errors import CompositionError, MissingData
+from dequorum.expert_network.nodes import ChemicalNode
+from dequorum.expert_network.pipeline import diagnose
+from dequorum.graph.routing import KnowledgeGraph
 
 known_symptoms = set(ChemicalNode.DATA.keys())
 arbitrary_symptoms = st.text(min_size=1, max_size=24).filter(

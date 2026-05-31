@@ -8,7 +8,7 @@ Shelved exploratory code. Kept because the questions it asks are still interesti
 - `tests_vsa/` — Property tests for the above (hand-computed cases, semivalue axioms, empirical Banzhaf-vs-Shapley gap).
 - `01-hdc-attribution-functional.md` — The original Experiment 1 spec.
 
-## Why this is here, not in ai_playground/
+## Why this is here, not in dequorum/
 
 Project pivoted from **Path R** (research — invent novel non-LLM AI math) to **Path E** (engineering — build a crowdsourced LLM/MoE/LoRA network with peer review and tokenomics for OSS code knowledge). The HDC-specific math doesn't transfer to neural-network attribution; the core primitives (`Node`, `Signature`, `ProofObject`, `AttributionLedger`) and the four invariants do.
 

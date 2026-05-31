@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}dequorum{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .badge { @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    pre { white-space: pre-wrap; word-break: break-word; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+  <nav class="bg-slate-900 text-slate-100 shadow">
+    <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-6">
+      <a href="/" class="font-semibold text-white hover:text-indigo-300">dequorum</a>
+      <div class="flex gap-4 text-sm">
+        <a href="/query" class="hover:text-indigo-300">Query</a>
+        <a href="/review" class="hover:text-indigo-300">Review</a>
+        <a href="/contributions" class="hover:text-indigo-300">Contributions</a>
+        <a href="/experts" class="hover:text-indigo-300">Experts</a>
+      </div>
+    </div>
+  </nav>
+  <main class="max-w-6xl mx-auto px-4 py-6">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="max-w-6xl mx-auto px-4 py-6 text-xs text-slate-400">
+    Apache-2.0 &middot; Qwen 2.5 Coder 7B base &middot; BM25 retrieval
+  </footer>
+</body>
+</html>

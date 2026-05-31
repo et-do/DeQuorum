@@ -179,7 +179,7 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
-# ai_playground local CLI state
-.ai_playground.db
-.ai_playground.db-journal
+# dequorum local CLI state
+.dequorum.db
+.dequorum.db-journal
 .claude/settings.local.json

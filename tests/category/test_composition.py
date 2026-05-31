@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from ai_playground.category.composition import Morphism, compose
-from ai_playground.core.errors import MissingData
-from ai_playground.core.node import Node
+from dequorum.category.composition import Morphism, compose
+from dequorum.core.errors import MissingData
+from dequorum.core.node import Node
 
 
 class _Add(Node):

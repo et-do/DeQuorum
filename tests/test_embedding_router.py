@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from ai_playground.embedder import HashEmbedder
-from ai_playground.experts import Expert, ExpertRegistry
-from ai_playground.router import EmbeddingRouter
+from dequorum.embedder import HashEmbedder
+from dequorum.experts import Expert, ExpertRegistry
+from dequorum.router import EmbeddingRouter
 
 
 def _expert(eid: str, prompt: str, tags: tuple[str, ...] = ()) -> Expert:

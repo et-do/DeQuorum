@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from ai_playground.base_model import MockBaseModel, OllamaBaseModel
-from ai_playground.core.errors import CompositionError
+from dequorum.base_model import MockBaseModel, OllamaBaseModel
+from dequorum.core.errors import CompositionError
 
 
 class _FakeResp:
@@ -38,7 +38,7 @@ def test_mock_model_distinguishes_system_and_user() -> None:
 
 def test_ollama_parses_chat_response() -> None:
     payload = {"message": {"role": "assistant", "content": "hello world"}}
-    target = "ai_playground.base_model.request.urlopen"
+    target = "dequorum.base_model.request.urlopen"
     with patch(target, return_value=_FakeResp(payload)):
         result = OllamaBaseModel().complete("sys", "user")
     assert result == "hello world"
@@ -46,7 +46,7 @@ def test_ollama_parses_chat_response() -> None:
 
 def test_ollama_raises_on_empty_content() -> None:
     payload = {"message": {"role": "assistant", "content": ""}}
-    target = "ai_playground.base_model.request.urlopen"
+    target = "dequorum.base_model.request.urlopen"
     with patch(target, return_value=_FakeResp(payload)):
         with pytest.raises(CompositionError):
             OllamaBaseModel().complete("sys", "user")
@@ -55,7 +55,7 @@ def test_ollama_raises_on_empty_content() -> None:
 def test_ollama_raises_on_connection_failure() -> None:
     from urllib.error import URLError
 
-    target = "ai_playground.base_model.request.urlopen"
+    target = "dequorum.base_model.request.urlopen"
     with patch(target, side_effect=URLError("refused")):
         with pytest.raises(CompositionError, match="Ollama unreachable"):
             OllamaBaseModel().complete("sys", "user")

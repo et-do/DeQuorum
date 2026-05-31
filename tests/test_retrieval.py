@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from ai_playground.contribution_store import STATUS_APPROVED, ContributionStore
-from ai_playground.contributions import Contribution
-from ai_playground.retrieval import BM25Index, Retriever
+from dequorum.contribution_store import STATUS_APPROVED, ContributionStore
+from dequorum.contributions import Contribution
+from dequorum.retrieval import BM25Index, Retriever
 
 
 def _c(expert: str, text: str, *, key: bytes = b"k") -> Contribution:

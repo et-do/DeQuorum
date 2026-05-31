@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from ai_playground.votes import Vote
+from dequorum.votes import Vote
 
 
 def _v(score: int = 1, voter: str = "rs") -> Vote:

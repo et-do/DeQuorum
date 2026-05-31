@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from ai_playground.core.ledger import AttributionLedger
-from ai_playground.core.node import Signature
-from ai_playground.core.proof import ProofObject
+from dequorum.core.ledger import AttributionLedger
+from dequorum.core.node import Signature
+from dequorum.core.proof import ProofObject
 
 
 def _sig(node_id: str) -> Signature:

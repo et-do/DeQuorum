@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from ai_playground.experts import Expert, ExpertRegistry
+from dequorum.experts import Expert, ExpertRegistry
 
 
 def _expert(eid: str = "e1", tags: tuple[str, ...] = ("python",)) -> Expert:

@@ -8,90 +8,6 @@ resolution-markers = [
 ]
 
 [[package]]
-name = "ai-playground"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "chromadb" },
-    { name = "fastapi" },
-    { name = "jinja2" },
-    { name = "mcp" },
-    { name = "networkx" },
-    { name = "numpy" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "python-multipart" },
-    { name = "sentence-transformers" },
-    { name = "sqlite-utils" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "hypothesis" },
-    { name = "ipykernel" },
-    { name = "mypy" },
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-benchmark" },
-    { name = "pytest-cov" },
-    { name = "pytest-xdist" },
-    { name = "ruff" },
-]
-experimental = [
-    { name = "discopy" },
-    { name = "lark" },
-    { name = "matplotlib" },
-    { name = "nltk" },
-    { name = "rdflib" },
-    { name = "scipy" },
-    { name = "sparqlwrapper" },
-    { name = "sympy" },
-    { name = "z3-solver" },
-]
-ner = [
-    { name = "spacy" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "chromadb", specifier = ">=1.5" },
-    { name = "discopy", marker = "extra == 'experimental'", specifier = ">=1.2" },
-    { name = "fastapi", specifier = ">=0.115" },
-    { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.130" },
-    { name = "ipykernel", marker = "extra == 'dev'", specifier = ">=6.29" },
-    { name = "jinja2", specifier = ">=3.1" },
-    { name = "lark", marker = "extra == 'experimental'", specifier = ">=1.2" },
-    { name = "matplotlib", marker = "extra == 'experimental'", specifier = ">=3.10" },
-    { name = "mcp", specifier = ">=1.27" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.20" },
-    { name = "networkx", specifier = ">=3.4" },
-    { name = "nltk", marker = "extra == 'experimental'", specifier = ">=3.9" },
-    { name = "numpy", specifier = ">=2.4" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0" },
-    { name = "pydantic", specifier = ">=2.12" },
-    { name = "pydantic-settings", specifier = ">=2.13" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.0" },
-    { name = "pytest-benchmark", marker = "extra == 'dev'", specifier = ">=5.1" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0" },
-    { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.5" },
-    { name = "python-multipart", specifier = ">=0.0.12" },
-    { name = "rdflib", marker = "extra == 'experimental'", specifier = ">=7.1" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15" },
-    { name = "scipy", marker = "extra == 'experimental'", specifier = ">=1.15" },
-    { name = "sentence-transformers", specifier = ">=5.0" },
-    { name = "spacy", marker = "extra == 'ner'", specifier = ">=3.7" },
-    { name = "sparqlwrapper", marker = "extra == 'experimental'", specifier = ">=2.0" },
-    { name = "sqlite-utils", specifier = ">=3.38" },
-    { name = "sympy", marker = "extra == 'experimental'", specifier = ">=1.13" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
-    { name = "z3-solver", marker = "extra == 'experimental'", specifier = ">=4.13" },
-]
-provides-extras = ["experimental", "ner", "dev"]
-
-[[package]]
 name = "aiohappyeyeballs"
 version = "2.6.2"
 source = { registry = "https://pypi.org/simple" }
@@ -928,6 +844,90 @@ sdist = { url = "https://files.pythonhosted.org/packages/60/8b/32f9823da46cde7df
 wheels = [
     { url = "https://files.pythonhosted.org/packages/05/7f/798705f5296a58ca505d600456748d1be48078eac8a7050d8a98bc9edb89/decorator-5.3.1-py3-none-any.whl", hash = "sha256:f47fe6fdbd2edd623ecfe36875d37aba411624e2670dd395dddae1358689bb3c", size = 10365, upload-time = "2026-05-18T06:03:26.517Z" },
 ]
+
+[[package]]
+name = "dequorum"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "chromadb" },
+    { name = "fastapi" },
+    { name = "jinja2" },
+    { name = "mcp" },
+    { name = "networkx" },
+    { name = "numpy" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "python-multipart" },
+    { name = "sentence-transformers" },
+    { name = "sqlite-utils" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "hypothesis" },
+    { name = "ipykernel" },
+    { name = "mypy" },
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-benchmark" },
+    { name = "pytest-cov" },
+    { name = "pytest-xdist" },
+    { name = "ruff" },
+]
+experimental = [
+    { name = "discopy" },
+    { name = "lark" },
+    { name = "matplotlib" },
+    { name = "nltk" },
+    { name = "rdflib" },
+    { name = "scipy" },
+    { name = "sparqlwrapper" },
+    { name = "sympy" },
+    { name = "z3-solver" },
+]
+ner = [
+    { name = "spacy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "chromadb", specifier = ">=1.5" },
+    { name = "discopy", marker = "extra == 'experimental'", specifier = ">=1.2" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6.130" },
+    { name = "ipykernel", marker = "extra == 'dev'", specifier = ">=6.29" },
+    { name = "jinja2", specifier = ">=3.1" },
+    { name = "lark", marker = "extra == 'experimental'", specifier = ">=1.2" },
+    { name = "matplotlib", marker = "extra == 'experimental'", specifier = ">=3.10" },
+    { name = "mcp", specifier = ">=1.27" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.20" },
+    { name = "networkx", specifier = ">=3.4" },
+    { name = "nltk", marker = "extra == 'experimental'", specifier = ">=3.9" },
+    { name = "numpy", specifier = ">=2.4" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.0" },
+    { name = "pydantic", specifier = ">=2.12" },
+    { name = "pydantic-settings", specifier = ">=2.13" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.0" },
+    { name = "pytest-benchmark", marker = "extra == 'dev'", specifier = ">=5.1" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0" },
+    { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.5" },
+    { name = "python-multipart", specifier = ">=0.0.12" },
+    { name = "rdflib", marker = "extra == 'experimental'", specifier = ">=7.1" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15" },
+    { name = "scipy", marker = "extra == 'experimental'", specifier = ">=1.15" },
+    { name = "sentence-transformers", specifier = ">=5.0" },
+    { name = "spacy", marker = "extra == 'ner'", specifier = ">=3.7" },
+    { name = "sparqlwrapper", marker = "extra == 'experimental'", specifier = ">=2.0" },
+    { name = "sqlite-utils", specifier = ">=3.38" },
+    { name = "sympy", marker = "extra == 'experimental'", specifier = ">=1.13" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
+    { name = "z3-solver", marker = "extra == 'experimental'", specifier = ">=4.13" },
+]
+provides-extras = ["experimental", "ner", "dev"]
 
 [[package]]
 name = "discopy"

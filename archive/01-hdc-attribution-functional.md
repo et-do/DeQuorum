@@ -122,11 +122,11 @@ Concrete observations that would *kill* the claim:
 3. If `A` ranks sources *anti-correlated* with the remove-and-rescore baseline more than ~5% of the time, the functional is misleading. **Falsifies usefulness.**
 4. If a published paper already states C1–C5 with proofs, **the experiment is unpublishable as novelty** (but is still useful internal validation). The literature sweep ([notes 01](../notes/01-vsa-hdc-frontier.md), [notes 04](../notes/04-attribution-math-frontier.md)) found no such paper as of 2025-05.
 
-## 10. Implementation roadmap (ties into `ai_playground/vsa/`)
+## 10. Implementation roadmap (ties into `dequorum/vsa/`)
 
 Phase 0 — primitives (done). `random_hypervector`, `bind`, `bundle`, `cosine` already exist.
 
-Phase 1 — exact reference. Add `ai_playground/vsa/attribution.py`:
+Phase 1 — exact reference. Add `dequorum/vsa/attribution.py`:
 - `banzhaf_attribution(bundle_components, query) -> dict[int, float]` — the `A` functional.
 - `exact_shapley(bundle_components, query) -> dict[int, float]` — brute-force `O(2^n d)` ground truth.
 - `remove_and_rescore_attribution(bundle_components, query) -> dict[int, float]` — model-faithful baseline.

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Contributions &middot; dequorum{% endblock %}
+{% block content %}
+<div class="flex items-baseline justify-between mb-4 gap-4 flex-wrap">
+  <h1 class="text-2xl font-bold">Contributions ({{ rows|length }})</h1>
+  <form method="get" action="/contributions" class="text-sm flex gap-2">
+    <select name="expert" class="border border-slate-300 rounded px-2 py-1">
+      <option value="">all experts</option>
+      {% for e in experts %}
+      <option value="{{ e.expert_id }}" {% if filter_expert == e.expert_id %}selected{% endif %}>{{ e.expert_id }}</option>
+      {% endfor %}
+    </select>
+    <select name="status" class="border border-slate-300 rounded px-2 py-1">
+      <option value="">all statuses</option>
+      <option value="pending" {% if filter_status == "pending" %}selected{% endif %}>pending</option>
+      <option value="approved" {% if filter_status == "approved" %}selected{% endif %}>approved</option>
+      <option value="rejected" {% if filter_status == "rejected" %}selected{% endif %}>rejected</option>
+    </select>
+    <button type="submit" class="bg-indigo-600 text-white rounded px-3 py-1 hover:bg-indigo-700">filter</button>
+  </form>
+</div>
+
+<div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-slate-100 text-left text-xs uppercase tracking-wide text-slate-600">
+      <tr>
+        <th class="px-3 py-2">status</th>
+        <th class="px-3 py-2">expert</th>
+        <th class="px-3 py-2">text</th>
+        <th class="px-3 py-2 text-center">tally</th>
+        <th class="px-3 py-2 text-right"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for row in rows %}
+      <tr class="hover:bg-slate-50">
+        <td class="px-3 py-2">
+          {% set st = row.status %}
+          {% if st == STATUS_APPROVED %}
+          <span class="badge bg-green-100 text-green-800">approved</span>
+          {% elif st == STATUS_REJECTED %}
+          <span class="badge bg-red-100 text-red-800">rejected</span>
+          {% else %}
+          <span class="badge bg-amber-100 text-amber-800">pending</span>
+          {% endif %}
+        </td>
+        <td class="px-3 py-2 mono text-xs">{{ row.contribution.expert_id }}</td>
+        <td class="px-3 py-2">
+          <div class="line-clamp-2">{{ row.contribution.text }}</div>
+        </td>
+        <td class="px-3 py-2 text-center mono text-xs">
+          {{ "%+d"|format(row.tally) }}
+        </td>
+        <td class="px-3 py-2 text-right">
+          <a href="/contributions/{{ row.contribution.contribution_id }}" class="text-indigo-600 hover:underline">detail &rarr;</a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="px-3 py-6 text-center text-slate-400">no contributions match these filters</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

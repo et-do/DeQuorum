@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from ai_playground.vsa import (
+from dequorum.vsa import (
     banzhaf_attribution,
     exact_shapley,
     leave_one_out_attribution,

@@ -5,12 +5,12 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from ai_playground.web.app import configure_app, create_app
+from dequorum.web.app import configure_app, create_app
 
 
 @pytest.fixture()
 def client(tmp_path: Path) -> TestClient:
-    db = tmp_path / "ai_playground.db"
+    db = tmp_path / "dequorum.db"
     # Use keyword router in tests so we don't load the sentence-transformers model.
     configure_app(
         db_path=str(db),

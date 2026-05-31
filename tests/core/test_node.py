@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from ai_playground.core.errors import MissingData
-from ai_playground.core.node import Node, Signature
+from dequorum.core.errors import MissingData
+from dequorum.core.node import Node, Signature
 
 
 class _Lookup(Node):

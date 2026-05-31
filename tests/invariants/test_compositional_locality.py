@@ -5,7 +5,7 @@ from __future__ import annotations
 from hypothesis import given
 from hypothesis import strategies as st
 
-from ai_playground.graph.routing import KnowledgeGraph
+from dequorum.graph.routing import KnowledgeGraph
 
 
 def _two_step_graph() -> KnowledgeGraph:
@@ -45,8 +45,8 @@ def test_unrelated_edge_does_not_alter_existing_route(
 
 
 def test_appending_morphism_only_extends_chain() -> None:
-    from ai_playground.category.composition import Morphism, compose
-    from ai_playground.core.node import Node
+    from dequorum.category.composition import Morphism, compose
+    from dequorum.core.node import Node
 
     class _Inc(Node):
         def __init__(self, node_id: str) -> None:

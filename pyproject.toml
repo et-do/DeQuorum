@@ -1,5 +1,5 @@
 [project]
-name = "ai-playground"
+name = "dequorum"
 version = "0.1.0"
 description = "Sandbox for playing around with AI architectures"
 readme = "README.md"
@@ -71,12 +71,12 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/et-do/ai-playground"
-Repository = "https://github.com/et-do/ai-playground"
-Issues = "https://github.com/et-do/ai-playground/issues"
+Homepage = "https://github.com/et-do/dequorum"
+Repository = "https://github.com/et-do/dequorum"
+Issues = "https://github.com/et-do/dequorum/issues"
 
 [project.scripts]
-ai_playground = "ai_playground.cli:main"
+dequorum = "dequorum.cli:main"
 
 [tool.ruff]
 target-version = "py313"
@@ -102,7 +102,7 @@ plugins = ["pydantic.mypy"]
 
 
 [tool.hatch.build.targets.wheel]
-packages = ["ai_playground"]
+packages = ["dequorum"]
 
 [build-system]
 requires = ["hatchling"]

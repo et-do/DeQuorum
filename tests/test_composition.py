@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import pytest
 
-from ai_playground.composition import (
+from dequorum.composition import (
     STRATEGIES,
     ConcatStrategy,
     PickBestStrategy,
     make_strategy,
 )
-from ai_playground.core.node import Signature
-from ai_playground.experts import Expert
-from ai_playground.pipeline import ExpertAnswer
-from ai_playground.retrieval import ScoredContribution
+from dequorum.core.node import Signature
+from dequorum.experts import Expert
+from dequorum.pipeline import ExpertAnswer
+from dequorum.retrieval import ScoredContribution
 
 
 def _expert(eid: str) -> Expert:

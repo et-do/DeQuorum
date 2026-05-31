@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import pytest
 
-from ai_playground.contribution_store import (
+from dequorum.contribution_store import (
     STATUS_APPROVED,
     STATUS_PENDING,
     STATUS_REJECTED,
     ContributionStore,
 )
-from ai_playground.contributions import Contribution
-from ai_playground.core.errors import CompositionError
-from ai_playground.review import ReviewService
+from dequorum.contributions import Contribution
+from dequorum.core.errors import CompositionError
+from dequorum.review import ReviewService
 
 
 def _c(expert_id: str = "py", contributor_id: str = "py") -> Contribution:
@@ -94,7 +94,7 @@ def test_unknown_contribution_raises() -> None:
 
 
 def test_retrieval_excludes_pending_contributions() -> None:
-    from ai_playground.retrieval import Retriever
+    from dequorum.retrieval import Retriever
 
     store = ContributionStore()
     approved = Contribution.create(

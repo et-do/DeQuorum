@@ -1,12 +1,12 @@
 """Vector Symbolic Architectures (bipolar hyperdimensional computing)."""
 
-from ai_playground.vsa.attribution import (
+from dequorum.vsa.attribution import (
     banzhaf_attribution,
     exact_shapley,
     leave_one_out_attribution,
     uniform_attribution,
 )
-from ai_playground.vsa.hypervector import (
+from dequorum.vsa.hypervector import (
     DIMENSIONS,
     Hypervector,
     bind,

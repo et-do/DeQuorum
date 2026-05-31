@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from ai_playground.core.errors import MissingData
-from ai_playground.core.ledger import AttributionLedger
-from ai_playground.expert_network.pipeline import diagnose
+from dequorum.core.errors import MissingData
+from dequorum.core.ledger import AttributionLedger
+from dequorum.expert_network.pipeline import diagnose
 
 
 def test_end_to_end_approved_case() -> None:

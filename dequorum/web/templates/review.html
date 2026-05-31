@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Review queue &middot; dequorum{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-bold mb-2">Review queue</h1>
+<p class="text-sm text-slate-600 mb-6">{{ rows|length }} contributions awaiting peer review. Approved at +{{ APPROVAL_THRESHOLD }}, rejected at {{ REJECTION_THRESHOLD }}.</p>
+
+{% if not rows %}
+<div class="bg-white border border-slate-200 rounded-lg p-8 text-center text-slate-500">
+  No pending contributions. Submit one via <span class="mono">dequorum submit</span> or the contributions page.
+</div>
+{% endif %}
+
+<div class="space-y-4">
+  {% for row in rows %}
+  <div class="bg-white border border-slate-200 rounded-lg p-5">
+    <div class="flex items-baseline justify-between gap-3 flex-wrap mb-3">
+      <div>
+        <a href="/contributions/{{ row.contribution.contribution_id }}" class="font-semibold text-indigo-700 hover:underline">
+          {{ row.contribution.expert_id }}
+        </a>
+        <span class="mono text-xs text-slate-500 ml-2">by {{ row.contribution.contributor_id }}</span>
+      </div>
+      <span class="badge bg-slate-100 text-slate-700">tally {{ "%+d"|format(row.tally) }}</span>
+    </div>
+
+    <p class="text-slate-800 leading-relaxed mb-3">{{ row.contribution.text }}</p>
+
+    {% if row.contribution.citations %}
+    <ul class="text-xs space-y-1 mb-3">
+      {% for url in row.contribution.citations %}
+      <li><a href="{{ url }}" target="_blank" rel="noopener" class="text-indigo-600 hover:underline break-all">{{ url }}</a></li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    <form method="post" action="/contributions/{{ row.contribution.contribution_id }}/vote" class="flex flex-wrap items-end gap-3 pt-3 border-t border-slate-100">
+      <input type="hidden" name="next_url" value="/review">
+      <label class="text-sm">
+        <span class="block text-slate-600 mb-1">as expert</span>
+        <select name="voter_id" required class="border border-slate-300 rounded px-2 py-1">
+          {% for e in experts %}
+          {% if e.expert_id != row.contribution.contributor_id %}
+          <option value="{{ e.expert_id }}">{{ e.expert_id }}</option>
+          {% endif %}
+          {% endfor %}
+        </select>
+      </label>
+      <button type="submit" name="score" value="1" class="bg-green-600 text-white rounded px-3 py-1.5 text-sm hover:bg-green-700">+1 approve</button>
+      <button type="submit" name="score" value="0" class="bg-slate-300 text-slate-800 rounded px-3 py-1.5 text-sm hover:bg-slate-400">0 abstain</button>
+      <button type="submit" name="score" value="-1" class="bg-red-600 text-white rounded px-3 py-1.5 text-sm hover:bg-red-700">-1 reject</button>
+    </form>
+
+    {% if row.votes %}
+    <div class="mt-3 text-xs text-slate-500">
+      already voted:
+      {% for v in row.votes %}
+      <span class="mono">{{ v.voter_id }}({{ "%+d"|format(v.score) }})</span>{% if not loop.last %},{% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

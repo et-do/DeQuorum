@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from ai_playground.core.errors import CompositionError
-from ai_playground.graph.routing import KnowledgeGraph
+from dequorum.core.errors import CompositionError
+from dequorum.graph.routing import KnowledgeGraph
 
 
 def _stocked() -> KnowledgeGraph:

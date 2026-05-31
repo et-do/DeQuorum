@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from ai_playground.vsa import bind, bundle, cosine, random_hypervector, unbind
+from dequorum.vsa import bind, bundle, cosine, random_hypervector, unbind
 from hypothesis import given
 from hypothesis import strategies as st
 

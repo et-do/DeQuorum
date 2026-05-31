@@ -5,9 +5,9 @@ from __future__ import annotations
 from hypothesis import given
 from hypothesis import strategies as st
 
-from ai_playground.core.errors import CompositionError
-from ai_playground.expert_network.nodes import ChemicalNode
-from ai_playground.expert_network.pipeline import diagnose
+from dequorum.core.errors import CompositionError
+from dequorum.expert_network.nodes import ChemicalNode
+from dequorum.expert_network.pipeline import diagnose
 
 symptoms = st.sampled_from([*sorted(ChemicalNode.DATA.keys()), "__unknown__"])
 ages = st.integers(min_value=0, max_value=120)
