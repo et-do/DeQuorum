@@ -12,10 +12,19 @@ from fastapi.templating import Jinja2Templates
 from dequorum.core.errors import CompositionError
 from dequorum.experts import ExpertRegistry
 from dequorum.experts.seeds import build_seed_registry
+from dequorum.identity.agreement import current_agreement
+from dequorum.identity.contributor import Contributor, Tier
+from dequorum.identity.seeds import (
+    populate as populate_seed_contributors,
+)
+from dequorum.identity.seeds import (
+    seed_contributor_for,
+)
+from dequorum.identity.store import IdentityStore
 from dequorum.inference.base_model import BaseModel, MockBaseModel, OllamaBaseModel
 from dequorum.inference.composition import make_strategy
 from dequorum.inference.pipeline import Pipeline
-from dequorum.knowledge.contribution import Contribution
+from dequorum.intake import DuplicateDetector, SubmissionPipeline
 from dequorum.knowledge.seeds import populate as populate_seed_contributions
 from dequorum.knowledge.store import (
     STATUS_APPROVED,
@@ -31,6 +40,13 @@ from dequorum.review.service import (
 )
 from dequorum.routing import EmbeddingRouter, KeywordRouter
 from dequorum.routing.embedder import SentenceTransformerEmbedder
+from dequorum.taxonomy.seeds import (
+    EXPERT_DEFAULT_CATEGORY,
+)
+from dequorum.taxonomy.seeds import (
+    populate as populate_seed_categories,
+)
+from dequorum.taxonomy.store import CategoryStore
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
@@ -38,6 +54,8 @@ _TEMPLATES_DIR = Path(__file__).parent / "templates"
 @dataclass
 class AppConfig:
     db_path: str = "./.dequorum.db"
+    identity_db_path: str = "./.dequorum-identity.db"
+    category_db_path: str = "./.dequorum-categories.db"
     use_mock: bool = False
     ollama_model: str = "qwen2.5-coder:7b"
     ollama_host: str = "http://localhost:11434"
@@ -104,6 +122,24 @@ def _open_store() -> ContributionStore:
     store = ContributionStore(path)
     if is_new and len(store) == 0:
         populate_seed_contributions(store)
+    return store
+
+
+def _open_identity_store() -> IdentityStore:
+    path = _config.identity_db_path
+    is_new = path == ":memory:" or not Path(path).exists()
+    store = IdentityStore(path)
+    if is_new and len(store) == 0:
+        populate_seed_contributors(store)
+    return store
+
+
+def _open_category_store() -> CategoryStore:
+    path = _config.category_db_path
+    is_new = path == ":memory:" or not Path(path).exists()
+    store = CategoryStore(path)
+    if is_new and len(store) == 0:
+        populate_seed_categories(store)
     return store
 
 
@@ -235,13 +271,17 @@ def create_app() -> FastAPI:
     ) -> RedirectResponse:
         if voter_id not in registry:
             raise HTTPException(status_code=400, detail=f"unknown voter: {voter_id!r}")
+        # Translate expert_id (form input) -> contributor_id + its signing key so
+        # the self-vote check works against the new contributor identity model.
+        voter_contributor, voter_key = seed_contributor_for(voter_id)
         with _open_store() as store:
             service = ReviewService(store, registry=registry)
             try:
                 service.cast_vote(
                     contribution_id=contribution_id,
-                    voter_id=voter_id,
+                    voter_id=voter_contributor.contributor_id,
                     score=score,
+                    signing_key=voter_key,
                 )
             except CompositionError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -252,6 +292,7 @@ def create_app() -> FastAPI:
         expert_id: str = Form(...),
         text: str = Form(...),
         citations: str = Form(""),
+        category: str = Form(""),
     ) -> RedirectResponse:
         if expert_id not in registry:
             raise HTTPException(
@@ -261,18 +302,123 @@ def create_app() -> FastAPI:
         cite_list = tuple(
             line.strip() for line in citations.splitlines() if line.strip()
         )
-        contribution = Contribution.create(
-            expert_id=expert.expert_id,
-            contributor_id=expert.expert_id,
-            text=text.strip(),
-            citations=cite_list,
-            signing_key=expert.signing_key,
+        category_id = category.strip() or EXPERT_DEFAULT_CATEGORY.get(
+            expert.expert_id, "uncategorized"
         )
-        with _open_store() as store:
-            store.add(contribution, status=STATUS_PENDING)
+        contributor, key = seed_contributor_for(expert.expert_id)
+        embedder = SentenceTransformerEmbedder()
+        with _open_store() as store, _open_category_store() as cat_store:
+            pipeline = SubmissionPipeline(
+                contribution_store=store,
+                category_store=cat_store,
+                duplicate_detector=DuplicateDetector(store, embedder),
+            )
+            try:
+                result = pipeline.submit(
+                    contributor=contributor,
+                    contributor_signing_key=key,
+                    expert_id=expert.expert_id,
+                    text=text.strip(),
+                    citations=cite_list,
+                    primary_category_id=category_id,
+                )
+            except CompositionError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         return RedirectResponse(
-            url=f"/contributions/{contribution.contribution_id}",
+            url=f"/contributions/{result.contribution.contribution_id}",
             status_code=303,
+        )
+
+    @app.get("/onboarding", response_class=HTMLResponse)
+    def onboarding_page(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(
+            request,
+            "onboarding.html",
+            {
+                "agreement": current_agreement(),
+                "tiers": list(Tier),
+            },
+        )
+
+    @app.post("/onboarding")
+    def onboarding_submit(
+        display_name: str = Form(...),
+        email: str = Form(""),
+    ) -> RedirectResponse:
+        import hashlib
+        import secrets
+
+        priv = secrets.token_bytes(32)
+        pub = hashlib.blake2b(priv, digest_size=32).digest()
+        email_hash = None
+        if email.strip():
+            email_hash = hashlib.blake2b(
+                email.strip().lower().encode(), digest_size=16
+            ).hexdigest()
+
+        agreement = current_agreement()
+        contributor = Contributor.create(
+            display_name=display_name.strip(),
+            public_key=pub,
+            signing_key=priv,
+            agreement_version=agreement.version,
+            agreement_text=agreement.text,
+            tier=Tier.EMAIL_VERIFIED if email_hash else Tier.ANONYMOUS,
+            email_hash=email_hash,
+        )
+        with _open_identity_store() as store:
+            store.add(contributor)
+        return RedirectResponse(
+            url=f"/contributors/{contributor.contributor_id}",
+            status_code=303,
+        )
+
+    @app.get("/contributors/{contributor_id}", response_class=HTMLResponse)
+    def contributor_detail(request: Request, contributor_id: str) -> HTMLResponse:
+        with _open_identity_store() as store:
+            contributor = store.get(contributor_id)
+            if contributor is None:
+                raise HTTPException(status_code=404, detail="contributor not found")
+        with _open_store() as cstore:
+            their_contributions = cstore.list_by_contributor(contributor_id)
+        return templates.TemplateResponse(
+            request,
+            "contributor.html",
+            {
+                "contributor": contributor,
+                "contributions": their_contributions,
+            },
+        )
+
+    @app.get("/categories", response_class=HTMLResponse)
+    def categories_page(request: Request) -> HTMLResponse:
+        with _open_category_store() as store:
+            categories = store.all()
+        return templates.TemplateResponse(
+            request,
+            "categories.html",
+            {"categories": categories},
+        )
+
+    @app.get("/lineages/{lineage_id}", response_class=HTMLResponse)
+    def lineage_detail(request: Request, lineage_id: str) -> HTMLResponse:
+        with _open_store() as store:
+            versions = store.list_for_lineage(lineage_id)
+            if not versions:
+                raise HTTPException(status_code=404, detail="lineage not found")
+            current = store.current_for_lineage(lineage_id)
+            statuses = {
+                v.contribution_id: store.get_status(v.contribution_id) for v in versions
+            }
+        return templates.TemplateResponse(
+            request,
+            "lineage.html",
+            {
+                "lineage_id": lineage_id,
+                "versions": versions,
+                "current": current,
+                "statuses": statuses,
+            },
         )
 
     @app.get("/query", response_class=HTMLResponse)

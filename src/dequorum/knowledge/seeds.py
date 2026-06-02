@@ -175,10 +175,21 @@ def _build_contributions(
     signing_key: bytes,
     facts: tuple[tuple[str, tuple[str, ...]], ...],
 ) -> list[Contribution]:
+    """Build contributions for a seed expert.
+
+    contributor_id is derived from the matching seed Contributor (one per expert
+    persona), and primary_category_id is looked up from EXPERT_DEFAULT_CATEGORY.
+    """
+    from dequorum.identity.seeds import contributor_id_for
+    from dequorum.taxonomy.seeds import EXPERT_DEFAULT_CATEGORY
+
+    contributor_id = contributor_id_for(expert_id)
+    category_id = EXPERT_DEFAULT_CATEGORY.get(expert_id, "uncategorized")
     return [
         Contribution.create(
             expert_id=expert_id,
-            contributor_id=expert_id,
+            contributor_id=contributor_id,
+            primary_category_id=category_id,
             text=text,
             citations=citations,
             signing_key=signing_key,

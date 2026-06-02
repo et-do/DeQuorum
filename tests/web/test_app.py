@@ -59,23 +59,27 @@ def test_review_queue_empty_initially(client: TestClient) -> None:
 
 
 def test_submit_then_review_then_vote_flow(client: TestClient) -> None:
-    # Submit a new contribution
+    # Submit a new contribution (must satisfy the 50-char minimum + HTTPS citation)
+    fact_text = (
+        "Brand new typing fact: PEP 698 introduced typing.override "
+        "as a decorator for enforcing override intent."
+    )
     r = client.post(
         "/contributions",
         data={
             "expert_id": "python-typing",
-            "text": "Brand new typing fact",
-            "citations": "https://example.com/pep",
+            "text": fact_text,
+            "citations": "https://peps.python.org/pep-0698/",
         },
         follow_redirects=False,
     )
-    assert r.status_code == 303
+    assert r.status_code == 303, r.text
     detail_url = r.headers["location"]
     contribution_id = detail_url.rsplit("/", 1)[-1]
 
     # It appears in /review
     r = client.get("/review")
-    assert "Brand new typing fact" in r.text
+    assert "PEP 698" in r.text
 
     # Two distinct non-contributor experts vote +1 each
     for voter in ("python-async", "python-packaging"):
@@ -93,15 +97,20 @@ def test_submit_then_review_then_vote_flow(client: TestClient) -> None:
 
 
 def test_self_voting_returns_400(client: TestClient) -> None:
+    fact_text = (
+        "Self-vote test claim: Rust's borrow checker prevents aliasing "
+        "between mutable references at compile time."
+    )
     r = client.post(
         "/contributions",
         data={
             "expert_id": "rust-ownership",
-            "text": "Self-vote test fact",
-            "citations": "",
+            "text": fact_text,
+            "citations": "https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html",
         },
         follow_redirects=False,
     )
+    assert r.status_code == 303, r.text
     contribution_id = r.headers["location"].rsplit("/", 1)[-1]
 
     v = client.post(

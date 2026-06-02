@@ -21,8 +21,11 @@ src/dequorum/
 tests/          # mirrors the package structure
 archive/        # Shelved Path-R research code (HDC, deterministic toy)
 docs/
-  PRODUCT.md
-  research/     # Literature reviews + experiment specs
+  PRODUCT.md           # product spec — what, who, scope, pricing, compute economics
+  architecture/        # internal design docs (data model, contributor intake, etc.)
+    data-model.dbml    # canonical schema (render at dbdiagram.io)
+  benchmarks/          # benchmark reports (output of `dequorum benchmark`)
+  research/            # literature reviews + shelved experiment specs
 ```
 
 ## Dev container

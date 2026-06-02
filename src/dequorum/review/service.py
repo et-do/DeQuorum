@@ -48,6 +48,7 @@ class ReviewService:
         contribution_id: str,
         voter_id: str,
         score: int,
+        signing_key: bytes | None = None,
     ) -> ReviewOutcome:
         contribution = self._store.get(contribution_id)
         if contribution is None:
@@ -57,7 +58,8 @@ class ReviewService:
                 f"self-voting forbidden: {voter_id!r} is the contributor"
             )
 
-        signing_key = self._signing_key_for(voter_id)
+        if signing_key is None:
+            signing_key = self._signing_key_for(voter_id)
         vote = Vote.create(
             contribution_id=contribution_id,
             voter_id=voter_id,

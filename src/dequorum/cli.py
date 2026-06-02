@@ -12,10 +12,19 @@ from pathlib import Path
 from dequorum.core.errors import CompositionError
 from dequorum.experts import ExpertRegistry
 from dequorum.experts.seeds import build_seed_registry
+from dequorum.identity.agreement import current_agreement
+from dequorum.identity.contributor import Contributor, Tier
+from dequorum.identity.seeds import (
+    populate as populate_seed_contributors,
+)
+from dequorum.identity.seeds import (
+    seed_contributor_for,
+)
+from dequorum.identity.store import IdentityStore
 from dequorum.inference.base_model import MockBaseModel, OllamaBaseModel
 from dequorum.inference.composition import make_strategy
 from dequorum.inference.pipeline import Pipeline
-from dequorum.knowledge.contribution import Contribution
+from dequorum.intake import DuplicateDetector, SubmissionPipeline
 from dequorum.knowledge.seeds import populate as populate_seed_contributions
 from dequorum.knowledge.store import (
     STATUS_PENDING,
@@ -26,8 +35,17 @@ from dequorum.retrieval import Retriever
 from dequorum.review.service import ReviewService
 from dequorum.routing import EmbeddingRouter, KeywordRouter
 from dequorum.routing.embedder import SentenceTransformerEmbedder
+from dequorum.taxonomy.seeds import (
+    EXPERT_DEFAULT_CATEGORY,
+)
+from dequorum.taxonomy.seeds import (
+    populate as populate_seed_categories,
+)
+from dequorum.taxonomy.store import CategoryStore
 
 DEFAULT_DB = "./.dequorum.db"
+DEFAULT_IDENTITY_DB = "./.dequorum-identity.db"
+DEFAULT_CATEGORY_DB = "./.dequorum-categories.db"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -71,12 +89,84 @@ def _build_parser() -> argparse.ArgumentParser:
     submit = sub.add_parser(
         "submit", help="Submit a signed contribution (pending review)"
     )
-    submit.add_argument("--as", dest="expert_id", required=True, help="Expert id")
+    submit.add_argument(
+        "--as",
+        dest="expert_id",
+        required=True,
+        help="Expert persona to publish under",
+    )
     submit.add_argument("--text", required=True, help="The factual claim")
     submit.add_argument(
-        "--cite", action="append", default=[], help="Citation URL (repeatable)"
+        "--cite",
+        action="append",
+        default=[],
+        help="Citation URL (repeatable, HTTPS only)",
+    )
+    submit.add_argument(
+        "--category",
+        default=None,
+        help="Primary category id. Defaults to the expert's default category.",
+    )
+    submit.add_argument(
+        "--block-on-duplicate",
+        action="store_true",
+        help="Hard-fail submission if a likely duplicate exists "
+        "(default: surface and let you decide)",
     )
     submit.add_argument("--db", default=DEFAULT_DB)
+    submit.add_argument("--category-db", default=DEFAULT_CATEGORY_DB)
+
+    update = sub.add_parser(
+        "update", help="Submit a new version of an existing approved contribution"
+    )
+    update.add_argument(
+        "--as",
+        dest="expert_id",
+        required=True,
+        help="Expert persona of the contributor making the update",
+    )
+    update.add_argument(
+        "--lineage",
+        required=True,
+        help="Lineage id to update (looks up the current version automatically)",
+    )
+    update.add_argument("--text", required=True, help="The updated claim text")
+    update.add_argument(
+        "--cite", action="append", default=[], help="Citation URL (repeatable)"
+    )
+    update.add_argument(
+        "--category",
+        default=None,
+        help="Optional new primary category (defaults to the existing one)",
+    )
+    update.add_argument("--db", default=DEFAULT_DB)
+    update.add_argument("--category-db", default=DEFAULT_CATEGORY_DB)
+
+    signup = sub.add_parser(
+        "signup", help="Create a new contributor account (signs the user agreement)"
+    )
+    signup.add_argument("--name", required=True, help="Display name")
+    signup.add_argument(
+        "--email", default=None, help="Optional email (recorded as hash)"
+    )
+    signup.add_argument(
+        "--seed-key",
+        default=None,
+        help="(dev only) Deterministic seed phrase for the keypair; default is random.",
+    )
+    signup.add_argument("--identity-db", default=DEFAULT_IDENTITY_DB)
+
+    list_cat = sub.add_parser("categories", help="List the curated category taxonomy")
+    list_cat.add_argument(
+        "--category-db",
+        default=DEFAULT_CATEGORY_DB,
+        help="Category DB path",
+    )
+
+    list_contrib = sub.add_parser(
+        "list-contributors", help="List signed-up contributors"
+    )
+    list_contrib.add_argument("--identity-db", default=DEFAULT_IDENTITY_DB)
 
     vote = sub.add_parser("vote", help="Cast a signed vote on a contribution")
     vote.add_argument("--as", dest="voter_id", required=True, help="Voter expert id")
@@ -156,6 +246,24 @@ def _open_store(path: str) -> ContributionStore:
     store = ContributionStore(path)
     if is_new and len(store) == 0:
         populate_seed_contributions(store)
+    return store
+
+
+def _open_identity_store(path: str) -> IdentityStore:
+    """Open the identity store at path and seed it on first use if empty."""
+    is_new = path == ":memory:" or not Path(path).exists()
+    store = IdentityStore(path)
+    if is_new and len(store) == 0:
+        populate_seed_contributors(store)
+    return store
+
+
+def _open_category_store(path: str) -> CategoryStore:
+    """Open the category store at path and seed it on first use if empty."""
+    is_new = path == ":memory:" or not Path(path).exists()
+    store = CategoryStore(path)
+    if is_new and len(store) == 0:
+        populate_seed_categories(store)
     return store
 
 
@@ -270,23 +378,60 @@ def _cmd_submit(args: argparse.Namespace) -> int:
         print(json.dumps({"error": str(exc)}, indent=2))
         return 1
 
-    contribution = Contribution.create(
-        expert_id=expert.expert_id,
-        contributor_id=expert.expert_id,
-        text=args.text,
-        citations=tuple(args.cite),
-        signing_key=expert.signing_key,
+    contributor, contributor_key = seed_contributor_for(expert.expert_id)
+    category = args.category or EXPERT_DEFAULT_CATEGORY.get(
+        expert.expert_id, "uncategorized"
     )
-    with _open_store(args.db) as store:
-        store.add(contribution, status=STATUS_PENDING)
+
+    embedder = SentenceTransformerEmbedder()
+    with (
+        _open_store(args.db) as store,
+        _open_category_store(args.category_db) as cat_store,
+    ):
+        pipeline = SubmissionPipeline(
+            contribution_store=store,
+            category_store=cat_store,
+            duplicate_detector=DuplicateDetector(store, embedder),
+            block_on_likely_duplicate=args.block_on_duplicate,
+        )
+        try:
+            result = pipeline.submit(
+                contributor=contributor,
+                contributor_signing_key=contributor_key,
+                expert_id=expert.expert_id,
+                text=args.text,
+                citations=tuple(args.cite),
+                primary_category_id=category,
+            )
+        except CompositionError as exc:
+            print(json.dumps({"error": str(exc)}, indent=2))
+            return 1
         total = len(store)
 
+    contribution = result.contribution
     print(
         json.dumps(
             {
                 "contribution_id": contribution.contribution_id,
+                "lineage_id": contribution.lineage_id,
+                "version_number": contribution.version_number,
                 "expert_id": contribution.expert_id,
+                "contributor_id": contribution.contributor_id,
+                "primary_category_id": contribution.primary_category_id,
                 "status": STATUS_PENDING,
+                "duplicate_check": {
+                    "band": result.duplicate_report.band.value,
+                    "suggested_action": result.duplicate_report.suggested_action,
+                    "top_candidates": [
+                        {
+                            "contribution_id": cand.contribution_id,
+                            "lineage_id": cand.lineage_id,
+                            "score": round(cand.score, 4),
+                            "text_preview": cand.text[:120],
+                        }
+                        for cand in result.duplicate_report.top_candidates
+                    ],
+                },
                 "signature": asdict(contribution.signature),
                 "store_total": total,
                 "db": args.db,
@@ -294,6 +439,161 @@ def _cmd_submit(args: argparse.Namespace) -> int:
             indent=2,
         )
     )
+    return 0
+
+
+def _cmd_update(args: argparse.Namespace) -> int:
+    registry = build_seed_registry()
+    try:
+        expert = registry.get(args.expert_id)
+    except KeyError as exc:
+        print(json.dumps({"error": str(exc)}, indent=2))
+        return 1
+
+    contributor, contributor_key = seed_contributor_for(expert.expert_id)
+
+    with (
+        _open_store(args.db) as store,
+        _open_category_store(args.category_db) as cat_store,
+    ):
+        current_contribution = store.current_for_lineage(args.lineage)
+        if current_contribution is None:
+            # Fall back: latest version of the lineage (covers pending lineages too)
+            existing = store.list_for_lineage(args.lineage)
+            if not existing:
+                print(
+                    json.dumps({"error": f"unknown lineage {args.lineage!r}"}, indent=2)
+                )
+                return 1
+            current_contribution = existing[-1]
+
+        category = args.category or current_contribution.primary_category_id
+        pipeline = SubmissionPipeline(
+            contribution_store=store,
+            category_store=cat_store,
+            duplicate_detector=None,  # updates skip dedup by design
+        )
+        try:
+            result = pipeline.submit(
+                contributor=contributor,
+                contributor_signing_key=contributor_key,
+                expert_id=expert.expert_id,
+                text=args.text,
+                citations=tuple(args.cite),
+                primary_category_id=category,
+                update_lineage_id=args.lineage,
+            )
+        except CompositionError as exc:
+            print(json.dumps({"error": str(exc)}, indent=2))
+            return 1
+
+    contribution = result.contribution
+    print(
+        json.dumps(
+            {
+                "contribution_id": contribution.contribution_id,
+                "lineage_id": contribution.lineage_id,
+                "version_number": contribution.version_number,
+                "parent_version": contribution.parent_version,
+                "expert_id": contribution.expert_id,
+                "contributor_id": contribution.contributor_id,
+                "status": STATUS_PENDING,
+                "db": args.db,
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def _cmd_signup(args: argparse.Namespace) -> int:
+    import hashlib
+    import secrets
+
+    if args.seed_key:
+        priv = args.seed_key.encode().ljust(32, b"\x00")[:32]
+        pub = b"pubkey-from-seed-" + priv[:8]
+    else:
+        priv = secrets.token_bytes(32)
+        pub = hashlib.blake2b(priv, digest_size=32).digest()
+
+    email_hash = None
+    if args.email:
+        email_hash = hashlib.blake2b(
+            args.email.strip().lower().encode(), digest_size=16
+        ).hexdigest()
+
+    agreement = current_agreement()
+    contributor = Contributor.create(
+        display_name=args.name,
+        public_key=pub,
+        signing_key=priv,
+        agreement_version=agreement.version,
+        agreement_text=agreement.text,
+        tier=Tier.EMAIL_VERIFIED if args.email else Tier.ANONYMOUS,
+        email_hash=email_hash,
+    )
+
+    with _open_identity_store(args.identity_db) as store:
+        store.add(contributor)
+        total = len(store)
+
+    print(
+        json.dumps(
+            {
+                "contributor_id": contributor.contributor_id,
+                "display_name": contributor.display_name,
+                "tier": int(contributor.tier),
+                "tier_name": contributor.tier.name,
+                "agreement_version": contributor.agreement_version,
+                "vote_weight": contributor.vote_weight,
+                "daily_submission_cap": contributor.daily_submission_cap,
+                "private_key_hex": priv.hex(),  # dev only; real signups never expose this
+                "public_key_hex": contributor.public_key.hex(),
+                "store_total": total,
+                "warning": (
+                    "Save private_key_hex SECURELY. The network cannot recover it. "
+                    "Real signups use client-side WebCrypto and never transmit the "
+                    "private key over the wire."
+                ),
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
+def _cmd_list_categories(args: argparse.Namespace) -> int:
+    with _open_category_store(args.category_db) as store:
+        payload = [
+            {
+                "category_id": c.category_id,
+                "parent_id": c.parent_id,
+                "display_name": c.display_name,
+                "depth": c.depth,
+                "description": c.description,
+            }
+            for c in store.all()
+        ]
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def _cmd_list_contributors(args: argparse.Namespace) -> int:
+    with _open_identity_store(args.identity_db) as store:
+        payload = [
+            {
+                "contributor_id": c.contributor_id,
+                "display_name": c.display_name,
+                "tier": int(c.tier),
+                "tier_name": c.tier.name,
+                "vote_weight": c.vote_weight,
+                "agreement_version": c.agreement_version,
+                "has_email": c.email_hash is not None,
+            }
+            for c in store.list_all()
+        ]
+    print(json.dumps(payload, indent=2))
     return 0
 
 
@@ -464,6 +764,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_query(args)
     if args.cmd == "submit":
         return _cmd_submit(args)
+    if args.cmd == "update":
+        return _cmd_update(args)
+    if args.cmd == "signup":
+        return _cmd_signup(args)
+    if args.cmd == "categories":
+        return _cmd_list_categories(args)
+    if args.cmd == "list-contributors":
+        return _cmd_list_contributors(args)
     if args.cmd == "vote":
         return _cmd_vote(args)
     if args.cmd == "list-contributions":

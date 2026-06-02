@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ contributor.display_name }} · contributor{% endblock %}
+{% block content %}
+<div class="bg-white border border-slate-200 rounded-lg p-5">
+  <h1 class="text-2xl font-semibold text-slate-900">{{ contributor.display_name }}</h1>
+  <p class="mt-1 text-sm text-slate-500 mono">{{ contributor.contributor_id }}</p>
+
+  <dl class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+    <div>
+      <dt class="text-slate-500 uppercase text-xs">Tier</dt>
+      <dd class="font-medium">{{ contributor.tier.name }} ({{ contributor.tier.value }})</dd>
+    </div>
+    <div>
+      <dt class="text-slate-500 uppercase text-xs">Vote weight</dt>
+      <dd class="font-medium">{{ contributor.vote_weight }}</dd>
+    </div>
+    <div>
+      <dt class="text-slate-500 uppercase text-xs">Daily submission cap</dt>
+      <dd class="font-medium">{{ contributor.daily_submission_cap }}</dd>
+    </div>
+    <div>
+      <dt class="text-slate-500 uppercase text-xs">Agreement version signed</dt>
+      <dd class="font-medium">{{ contributor.agreement_version }}</dd>
+    </div>
+  </dl>
+
+  <div class="mt-4 text-xs text-slate-500">
+    Email recorded: {{ "yes (hash only)" if contributor.email_hash else "no" }}
+  </div>
+</div>
+
+<h2 class="mt-8 text-lg font-semibold text-slate-900">Contributions ({{ contributions|length }})</h2>
+
+{% if contributions %}
+  <div class="mt-4 space-y-3">
+    {% for c in contributions %}
+      <a href="/contributions/{{ c.contribution_id }}" class="block bg-white border border-slate-200 rounded p-4 hover:border-indigo-400">
+        <div class="flex justify-between items-baseline">
+          <span class="text-sm font-medium text-slate-900">{{ c.expert_id }}</span>
+          <span class="text-xs text-slate-500 mono">v{{ c.version_number }} · {{ c.primary_category_id }}</span>
+        </div>
+        <p class="mt-1 text-sm text-slate-700 line-clamp-2">{{ c.text }}</p>
+      </a>
+    {% endfor %}
+  </div>
+{% else %}
+  <p class="mt-4 text-sm text-slate-500">No contributions yet.</p>
+{% endif %}
+{% endblock %}

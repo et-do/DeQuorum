@@ -91,6 +91,19 @@ select = ["E", "F", "I", "N", "UP", "RUF"]
 "src/dequorum/benchmark/questions.py" = ["E501"]
 "src/dequorum/knowledge/seeds.py" = ["E501"]
 "src/dequorum/experts/seeds.py" = ["E501"]
+"src/dequorum/taxonomy/seeds.py" = ["E501"]
+"src/dequorum/identity/agreement.py" = ["E501"]
+# SQL statements with the full contribution column list often exceed 88; the
+# alternative is unreadable line wrapping inside string literals.
+"src/dequorum/knowledge/store.py" = ["E501"]
+"src/dequorum/identity/seeds.py" = ["E501"]
+"src/dequorum/cli.py" = ["E501"]
+# Test fixtures with intentionally long claim texts (must clear the 50-char min
+# and read like real submissions).
+"tests/intake/test_submission.py" = ["E501"]
+"tests/intake/test_dedup.py" = ["E501"]
+"tests/identity/test_contributor.py" = ["E501"]
+"tests/taxonomy/test_taxonomy.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

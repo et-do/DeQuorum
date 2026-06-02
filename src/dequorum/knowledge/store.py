@@ -1,4 +1,4 @@
-"""SQLite-backed store for signed contributions, votes, and review status."""
+"""SQLite-backed store for signed contributions, votes, lineages, and review status."""
 
 from __future__ import annotations
 
@@ -9,11 +9,12 @@ from pathlib import Path
 from types import TracebackType
 
 from dequorum.core.node import Signature
-from dequorum.knowledge.contribution import Contribution
+from dequorum.knowledge.contribution import UNCATEGORIZED_ID, Contribution
 from dequorum.knowledge.status import (
     STATUS_APPROVED,
     STATUS_PENDING,
     STATUS_REJECTED,
+    STATUS_SUPERSEDED,
     VALID_STATUSES,
 )
 from dequorum.review.vote import Vote
@@ -22,6 +23,8 @@ __all__ = [
     "STATUS_APPROVED",
     "STATUS_PENDING",
     "STATUS_REJECTED",
+    "STATUS_SUPERSEDED",
+    "UNCATEGORIZED_ID",
     "VALID_STATUSES",
     "ContributionStore",
 ]
@@ -29,8 +32,12 @@ __all__ = [
 _TABLES = """
 CREATE TABLE IF NOT EXISTS contributions (
     contribution_id TEXT PRIMARY KEY,
+    lineage_id TEXT NOT NULL,
+    version_number INTEGER NOT NULL DEFAULT 1,
+    parent_version INTEGER,
     expert_id TEXT NOT NULL,
     contributor_id TEXT NOT NULL,
+    primary_category_id TEXT NOT NULL DEFAULT 'uncategorized',
     text TEXT NOT NULL,
     citations_json TEXT NOT NULL,
     sig_node_id TEXT NOT NULL,
@@ -38,6 +45,12 @@ CREATE TABLE IF NOT EXISTS contributions (
     sig_output_hash TEXT NOT NULL,
     sig_digest TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending'
+);
+
+CREATE TABLE IF NOT EXISTS contribution_lineages (
+    lineage_id TEXT PRIMARY KEY,
+    current_contribution_id TEXT,
+    created_at INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS votes (
@@ -56,30 +69,77 @@ CREATE TABLE IF NOT EXISTS votes (
 _INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_contributions_expert ON contributions(expert_id);
 CREATE INDEX IF NOT EXISTS idx_contributions_status ON contributions(status);
+CREATE INDEX IF NOT EXISTS idx_contributions_lineage ON contributions(lineage_id);
+CREATE INDEX IF NOT EXISTS idx_contributions_category ON contributions(primary_category_id);
+CREATE INDEX IF NOT EXISTS idx_contributions_contributor ON contributions(contributor_id);
 CREATE INDEX IF NOT EXISTS idx_votes_contribution ON votes(contribution_id);
 """
 
 
+_CONTRIBUTION_COLS = (
+    "contribution_id, lineage_id, version_number, parent_version, "
+    "expert_id, contributor_id, primary_category_id, "
+    "text, citations_json, "
+    "sig_node_id, sig_input_hash, sig_output_hash, sig_digest, "
+    "status"
+)
+
+
+_LEGACY_FIELD_DEFAULTS: dict[str, tuple[str, str]] = {
+    # column_name: (type clause, default value)
+    "status": ("TEXT NOT NULL DEFAULT 'approved'", "approved"),
+    "lineage_id": ("TEXT NOT NULL DEFAULT ''", ""),
+    "version_number": ("INTEGER NOT NULL DEFAULT 1", "1"),
+    "parent_version": ("INTEGER", ""),
+    "primary_category_id": (
+        "TEXT NOT NULL DEFAULT 'uncategorized'",
+        "uncategorized",
+    ),
+}
+
+
 class ContributionStore:
-    """CRUD over contributions + votes + review status. SQLite-backed."""
+    """CRUD over contributions + lineages + votes + review status. SQLite-backed."""
 
     def __init__(self, path: str | Path = ":memory:") -> None:
         self._conn = sqlite3.connect(str(path))
         self._conn.executescript(_TABLES)
         self._migrate_legacy_schema()
         self._conn.executescript(_INDEXES)
+        self._backfill_lineages_for_legacy_rows()
 
     def _migrate_legacy_schema(self) -> None:
-        """Pre-Week-3 DBs lack the status column; add it and treat legacy rows as approved."""  # noqa: E501
+        """Pre-v0.2 DBs lack lineage / category / status columns. Add them as needed."""
         cols = {
             row[1]
             for row in self._conn.execute("PRAGMA table_info(contributions)").fetchall()
         }
-        if "status" not in cols:
-            with self._conn:
+        with self._conn:
+            for name, (type_clause, _) in _LEGACY_FIELD_DEFAULTS.items():
+                if name not in cols:
+                    self._conn.execute(
+                        f"ALTER TABLE contributions ADD COLUMN {name} {type_clause}"
+                    )
+
+    def _backfill_lineages_for_legacy_rows(self) -> None:
+        """Give legacy rows (where lineage_id == '') a derived lineage based on contribution_id."""
+        legacy = self._conn.execute(
+            "SELECT contribution_id FROM contributions WHERE lineage_id = ''"
+        ).fetchall()
+        if not legacy:
+            return
+        with self._conn:
+            for (cid,) in legacy:
+                lineage_id = f"lin:legacy-{cid[:16]}"
                 self._conn.execute(
-                    "ALTER TABLE contributions ADD COLUMN status TEXT NOT NULL "
-                    "DEFAULT 'approved'"
+                    "UPDATE contributions SET lineage_id = ?, version_number = 1 "
+                    "WHERE contribution_id = ?",
+                    (lineage_id, cid),
+                )
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO contribution_lineages "
+                    "(lineage_id, current_contribution_id, created_at) VALUES (?, ?, 0)",
+                    (lineage_id, cid),
                 )
 
     def close(self) -> None:
@@ -104,13 +164,18 @@ class ContributionStore:
         with self._conn:
             self._conn.execute(
                 """INSERT OR REPLACE INTO contributions
-                (contribution_id, expert_id, contributor_id, text, citations_json,
+                (contribution_id, lineage_id, version_number, parent_version,
+                 expert_id, contributor_id, primary_category_id, text, citations_json,
                  sig_node_id, sig_input_hash, sig_output_hash, sig_digest, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     c.contribution_id,
+                    c.lineage_id,
+                    c.version_number,
+                    c.parent_version,
                     c.expert_id,
                     c.contributor_id,
+                    c.primary_category_id,
                     c.text,
                     json.dumps(list(c.citations)),
                     c.signature.node_id,
@@ -120,10 +185,19 @@ class ContributionStore:
                     status,
                 ),
             )
+            # Ensure a lineage row exists; only set current_contribution_id if approved.
+            self._conn.execute(
+                "INSERT OR IGNORE INTO contribution_lineages "
+                "(lineage_id, current_contribution_id, created_at) "
+                "VALUES (?, NULL, 0)",
+                (c.lineage_id,),
+            )
+            if status == STATUS_APPROVED:
+                self._set_lineage_current_locked(c.lineage_id, c.contribution_id)
 
     def get(self, contribution_id: str) -> Contribution | None:
         row = self._conn.execute(
-            "SELECT * FROM contributions WHERE contribution_id = ?",
+            f"SELECT {_CONTRIBUTION_COLS} FROM contributions WHERE contribution_id = ?",
             (contribution_id,),
         ).fetchone()
         return _row_to_contribution(row) if row else None
@@ -133,7 +207,7 @@ class ContributionStore:
     ) -> list[Contribution]:
         if status is not None and status not in VALID_STATUSES:
             raise ValueError(f"invalid status: {status!r}")
-        sql = "SELECT * FROM contributions WHERE expert_id = ?"
+        sql = f"SELECT {_CONTRIBUTION_COLS} FROM contributions WHERE expert_id = ?"
         params: tuple = (expert_id,)
         if status is not None:
             sql += " AND status = ?"
@@ -146,8 +220,34 @@ class ContributionStore:
         if status not in VALID_STATUSES:
             raise ValueError(f"invalid status: {status!r}")
         rows = self._conn.execute(
-            "SELECT * FROM contributions WHERE status = ? ORDER BY contribution_id",
+            f"SELECT {_CONTRIBUTION_COLS} FROM contributions WHERE status = ? "
+            "ORDER BY contribution_id",
             (status,),
+        ).fetchall()
+        return [_row_to_contribution(r) for r in rows]
+
+    def list_by_category(
+        self, category_id: str, *, status: str | None = None
+    ) -> list[Contribution]:
+        if status is not None and status not in VALID_STATUSES:
+            raise ValueError(f"invalid status: {status!r}")
+        sql = (
+            f"SELECT {_CONTRIBUTION_COLS} "
+            "FROM contributions WHERE primary_category_id = ?"
+        )
+        params: tuple = (category_id,)
+        if status is not None:
+            sql += " AND status = ?"
+            params = (category_id, status)
+        sql += " ORDER BY contribution_id"
+        rows = self._conn.execute(sql, params).fetchall()
+        return [_row_to_contribution(r) for r in rows]
+
+    def list_by_contributor(self, contributor_id: str) -> list[Contribution]:
+        rows = self._conn.execute(
+            f"SELECT {_CONTRIBUTION_COLS} "
+            "FROM contributions WHERE contributor_id = ? ORDER BY contribution_id",
+            (contributor_id,),
         ).fetchall()
         return [_row_to_contribution(r) for r in rows]
 
@@ -166,6 +266,82 @@ class ContributionStore:
                 "UPDATE contributions SET status = ? WHERE contribution_id = ?",
                 (status, contribution_id),
             )
+            # Maintain lineage's current pointer when promoting/demoting.
+            if status == STATUS_APPROVED:
+                row = self._conn.execute(
+                    "SELECT lineage_id FROM contributions WHERE contribution_id = ?",
+                    (contribution_id,),
+                ).fetchone()
+                if row:
+                    self._set_lineage_current_locked(row[0], contribution_id)
+            elif status == STATUS_REJECTED:
+                # If the rejected one was current, clear the pointer.
+                row = self._conn.execute(
+                    "SELECT lineage_id FROM contributions WHERE contribution_id = ?",
+                    (contribution_id,),
+                ).fetchone()
+                if row:
+                    self._conn.execute(
+                        "UPDATE contribution_lineages SET current_contribution_id = NULL "
+                        "WHERE lineage_id = ? AND current_contribution_id = ?",
+                        (row[0], contribution_id),
+                    )
+
+    # --- lineages ---
+
+    def _set_lineage_current_locked(
+        self, lineage_id: str, contribution_id: str
+    ) -> None:
+        """Inside an existing transaction: mark `contribution_id` current; supersede others."""
+        prev = self._conn.execute(
+            "SELECT current_contribution_id FROM contribution_lineages "
+            "WHERE lineage_id = ?",
+            (lineage_id,),
+        ).fetchone()
+        if prev and prev[0] and prev[0] != contribution_id:
+            self._conn.execute(
+                "UPDATE contributions SET status = ? WHERE contribution_id = ?",
+                (STATUS_SUPERSEDED, prev[0]),
+            )
+        self._conn.execute(
+            "INSERT INTO contribution_lineages "
+            "(lineage_id, current_contribution_id, created_at) "
+            "VALUES (?, ?, 0) "
+            "ON CONFLICT(lineage_id) DO UPDATE SET "
+            "current_contribution_id = excluded.current_contribution_id",
+            (lineage_id, contribution_id),
+        )
+
+    def current_for_lineage(self, lineage_id: str) -> Contribution | None:
+        row = self._conn.execute(
+            """SELECT c.contribution_id, c.lineage_id, c.version_number, c.parent_version,
+                      c.expert_id, c.contributor_id, c.primary_category_id,
+                      c.text, c.citations_json,
+                      c.sig_node_id, c.sig_input_hash, c.sig_output_hash, c.sig_digest,
+                      c.status
+                 FROM contributions c
+                 JOIN contribution_lineages l
+                   ON l.current_contribution_id = c.contribution_id
+                 WHERE l.lineage_id = ?""",
+            (lineage_id,),
+        ).fetchone()
+        return _row_to_contribution(row) if row else None
+
+    def list_for_lineage(self, lineage_id: str) -> list[Contribution]:
+        rows = self._conn.execute(
+            f"SELECT {_CONTRIBUTION_COLS} "
+            "FROM contributions WHERE lineage_id = ? ORDER BY version_number",
+            (lineage_id,),
+        ).fetchall()
+        return [_row_to_contribution(r) for r in rows]
+
+    def latest_version_for_lineage(self, lineage_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT COALESCE(MAX(version_number), 0) FROM contributions "
+            "WHERE lineage_id = ?",
+            (lineage_id,),
+        ).fetchone()
+        return int(row[0])
 
     # --- votes ---
 
@@ -223,7 +399,7 @@ class ContributionStore:
 
     def __iter__(self) -> Iterator[Contribution]:
         rows = self._conn.execute(
-            "SELECT * FROM contributions ORDER BY contribution_id"
+            f"SELECT {_CONTRIBUTION_COLS} FROM contributions ORDER BY contribution_id"
         ).fetchall()
         return iter(_row_to_contribution(r) for r in rows)
 
@@ -236,15 +412,19 @@ class ContributionStore:
 def _row_to_contribution(row: tuple) -> Contribution:
     return Contribution(
         contribution_id=row[0],
-        expert_id=row[1],
-        contributor_id=row[2],
-        text=row[3],
-        citations=tuple(json.loads(row[4])),
+        lineage_id=row[1],
+        version_number=int(row[2]),
+        parent_version=int(row[3]) if row[3] is not None else None,
+        expert_id=row[4],
+        contributor_id=row[5],
+        primary_category_id=row[6],
+        text=row[7],
+        citations=tuple(json.loads(row[8])),
         signature=Signature(
-            node_id=row[5],
-            input_hash=row[6],
-            output_hash=row[7],
-            digest=row[8],
+            node_id=row[9],
+            input_hash=row[10],
+            output_hash=row[11],
+            digest=row[12],
         ),
     )
 

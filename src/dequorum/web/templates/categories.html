@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Categories · dequorum{% endblock %}
+{% block content %}
+<h1 class="text-2xl font-semibold text-slate-900">Category taxonomy</h1>
+<p class="mt-2 text-sm text-slate-600">
+  Hybrid curated tree + free tags. Top-level categories are voted on by Tier 3+ reviewers;
+  sub-categories adapt over time. See <a href="/onboarding" class="text-indigo-600 underline">signup</a>
+  to start contributing.
+</p>
+
+<div class="mt-6 space-y-2">
+  {% for c in categories %}
+    <div class="bg-white border border-slate-200 rounded px-4 py-2 flex items-center gap-3"
+         style="padding-left: {{ 1 + c.depth * 1.5 }}rem;">
+      <span class="mono text-xs text-slate-500">{{ c.category_id }}</span>
+      <span class="text-sm font-medium text-slate-900">{{ c.display_name }}</span>
+      {% if c.description %}
+        <span class="text-xs text-slate-500">— {{ c.description }}</span>
+      {% endif %}
+    </div>
+  {% endfor %}
+</div>
+{% endblock %}
