@@ -1,0 +1,34 @@
+# Local-only reverse proxy.
+#
+# /api/* -> app:8000 (strips the /api prefix, so the app sees the same URLs it
+#                     would see when accessed directly during dev)
+# /*     -> frontend:5173 (Vite dev server with HMR)
+#
+# Auto HTTPS is disabled here because Caddy's ACME issuer can't talk to a
+# real CA from inside a docker network. For HTTPS in local dev, mkcert your
+# own cert and bind-mount it; production uses Cloud Run's managed TLS and
+# Firebase Hosting's managed TLS, so this proxy is a local-only concern.
+
+{
+    auto_https off
+    admin off
+}
+
+:80 {
+    # API: strip /api prefix and forward to the FastAPI app.
+    handle_path /api/* {
+        reverse_proxy app:8000
+    }
+
+    # Health check endpoints exposed by proxies (compose healthcheck talks to /).
+    handle_path /healthz {
+        respond "ok" 200
+    }
+
+    # Everything else: serve the SPA via Vite dev server.
+    # (In production this whole branch is gone; Firebase Hosting serves the
+    # built bundle and points / to the Cloud Run-hosted API.)
+    handle {
+        reverse_proxy frontend:5173
+    }
+}

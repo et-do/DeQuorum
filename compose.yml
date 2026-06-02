@@ -1,0 +1,122 @@
+# DeQuorum local development stack.
+#
+# Mirrors the production architecture:
+#   - Cloud Run    <-> app, ollama
+#   - Cloud SQL    <-> db
+#   - Firebase     <-> auth-emulator, frontend (Hosting)
+#
+# Bring up the whole stack:
+#     docker compose up
+#
+# Bring up only the backend (no frontend / proxy):
+#     docker compose up app db ollama
+#
+# Open http://localhost in your browser. The proxy routes / to the Vite dev
+# server and /api/* to the FastAPI app.
+
+name: dequorum
+
+services:
+
+  # --- Postgres ---------------------------------------------------------
+  db:
+    build:
+      context: ./services/db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: dev-only-not-for-prod
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # --- Ollama LLM inference server --------------------------------------
+  ollama:
+    build:
+      context: ./services/ollama
+    environment:
+      # Keep this aligned with DEFAULT_BASE_MODEL_ID's ollama_tag in
+      # services/app/src/dequorum/inference/models.py.
+      OLLAMA_BOOTSTRAP_MODEL: "qwen2.5-coder:7b"
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  # --- FastAPI orchestrator app -----------------------------------------
+  app:
+    build:
+      context: ./services/app
+      target: dev
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama:
+        condition: service_started
+    environment:
+      # Database connection (the app still uses SQLite until the Postgres
+      # port lands; this var is wired now so the future swap is config-only).
+      DEQUORUM_DATABASE_URL: "postgresql://dequorum_app:dev-only-not-for-prod@db:5432/dequorum"
+      # Inference target.
+      DEQUORUM_OLLAMA_HOST: "http://ollama:11434"
+      # Auth emulator (the prod Firebase config takes over when this is unset).
+      FIREBASE_AUTH_EMULATOR_HOST: "auth-emulator:9099"
+      FIREBASE_PROJECT_ID: "dequorum-local"
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount source for hot reload. The dev stage CMD re-syncs uv on each
+      # start so any pyproject changes are picked up.
+      - ./services/app/src:/app/src
+      - ./services/app/tests:/app/tests
+      - ./services/app/pyproject.toml:/app/pyproject.toml
+      - ./services/app/uv.lock:/app/uv.lock
+
+  # --- Vite dev server (SPA) --------------------------------------------
+  frontend:
+    build:
+      context: ./services/frontend
+      target: dev
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_PROXY_API_TARGET: "http://app:8000"
+    volumes:
+      - ./services/frontend/src:/app/src
+      - ./services/frontend/index.html:/app/index.html
+      - ./services/frontend/vite.config.ts:/app/vite.config.ts
+      - ./services/frontend/tsconfig.json:/app/tsconfig.json
+
+  # --- Caddy reverse proxy (local-only) ---------------------------------
+  proxy:
+    build:
+      context: ./services/proxy
+    depends_on:
+      - app
+      - frontend
+    ports:
+      - "80:80"
+
+  # --- Firebase Auth emulator (local-only) ------------------------------
+  auth-emulator:
+    build:
+      context: ./services/auth-emulator
+    ports:
+      - "9099:9099"
+      - "4000:4000"
+
+volumes:
+  db-data:
+  ollama-models:

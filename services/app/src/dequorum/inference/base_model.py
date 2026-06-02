@@ -16,15 +16,25 @@ class BaseModel(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class OllamaBaseModel:
-    """Talks to a local Ollama server. Defaults match Ollama's install defaults."""
+    """Talks to a local Ollama server.
 
-    model: str = "qwen2.5-coder:7b"
+    `model` accepts either a registered model_id (e.g. "qwen2.5-coder-7b") or
+    a raw Ollama tag (e.g. "qwen2.5-coder:7b"). Use registered ids when you
+    want the swap-via-config behavior; raw tags are an escape hatch.
+    """
+
+    model: str = ""  # empty = look up the default from inference/models.py
     host: str = "http://localhost:11434"
     timeout_seconds: float = 120.0
 
+    def _resolved_tag(self) -> str:
+        from dequorum.inference.models import DEFAULT_BASE_MODEL_ID, resolve_ollama_tag
+
+        return resolve_ollama_tag(self.model or DEFAULT_BASE_MODEL_ID)
+
     def complete(self, system: str, user: str) -> str:
         payload = {
-            "model": self.model,
+            "model": self._resolved_tag(),
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},

@@ -57,7 +57,10 @@ class AppConfig:
     identity_db_path: str = "./.dequorum-identity.db"
     category_db_path: str = "./.dequorum-categories.db"
     use_mock: bool = False
-    ollama_model: str = "qwen2.5-coder:7b"
+    # Empty string = look up DEFAULT_BASE_MODEL_ID from inference/models.py
+    # at request time so changing the registry default takes effect without
+    # restarting the app's process state.
+    ollama_model: str = ""
     ollama_host: str = "http://localhost:11434"
     top_k: int = 2
     retrieve_top_k: int = 3

@@ -55,7 +55,12 @@ def _build_parser() -> argparse.ArgumentParser:
     query = sub.add_parser("query", help="Ask the expert network a question")
     query.add_argument("text", help="The query text")
     query.add_argument("--mock", action="store_true", help="Use mock model")
-    query.add_argument("--model", default="qwen2.5-coder:7b", help="Ollama model tag")
+    query.add_argument(
+        "--model",
+        default=None,
+        help="Model id from inference/models.py registry, or raw Ollama tag. "
+        "Defaults to inference.models.DEFAULT_BASE_MODEL_ID.",
+    )
     query.add_argument("--host", default="http://localhost:11434", help="Ollama host")
     query.add_argument("--top-k", type=int, default=2, help="Max experts to consult")
     query.add_argument(
@@ -216,7 +221,11 @@ def _build_parser() -> argparse.ArgumentParser:
     bench.add_argument(
         "--mock", action="store_true", help="Use mock model (smoke test)"
     )
-    bench.add_argument("--model", default="qwen2.5-coder:7b", help="Ollama model tag")
+    bench.add_argument(
+        "--model",
+        default=None,
+        help="Model id from inference/models.py registry, or raw Ollama tag.",
+    )
     bench.add_argument("--host", default="http://localhost:11434", help="Ollama host")
     bench.add_argument(
         "--router", choices=("keyword", "embedding"), default="embedding"
@@ -301,7 +310,7 @@ def _cmd_query(args: argparse.Namespace) -> int:
     model: MockBaseModel | OllamaBaseModel = (
         MockBaseModel()
         if args.mock
-        else OllamaBaseModel(model=args.model, host=args.host)
+        else OllamaBaseModel(model=args.model or "", host=args.host)
     )
 
     retriever: Retriever | None = None
@@ -724,9 +733,14 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
     model: MockBaseModel | OllamaBaseModel = (
         MockBaseModel()
         if args.mock
-        else OllamaBaseModel(model=args.model, host=args.host)
+        else OllamaBaseModel(model=args.model or "", host=args.host)
     )
-    model_label = "mock" if args.mock else args.model
+    if args.mock:
+        model_label = "mock"
+    else:
+        from dequorum.inference.models import DEFAULT_BASE_MODEL_ID, resolve_ollama_tag
+
+        model_label = resolve_ollama_tag(args.model or DEFAULT_BASE_MODEL_ID)
 
     questions = SEED_QUESTIONS if args.limit is None else SEED_QUESTIONS[: args.limit]
 
