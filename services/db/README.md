@@ -1,15 +1,13 @@
 # services/db
 
-Postgres 16 for local DeQuorum development. The same schema (once ported from
-SQLite) targets Google Cloud SQL Postgres in production.
+Postgres 16 for local DeQuorum development. The same schema targets Google
+Cloud SQL Postgres in production.
 
 ## Status
 
 - ✅ Container builds, accepts connections on `:5432`
 - ✅ Bootstrap creates `dequorum` + `dequorum_test` databases on first start
-- ⏳ App still uses SQLite at runtime. Porting the stores to Postgres is its
-  own focused phase (data model is documented in
-  [`docs/architecture/data-model.dbml`](../../docs/architecture/data-model.dbml)).
+- ✅ App connects via psycopg3; schema applied by Alembic on app startup
 
 ## Connect
 
@@ -27,6 +25,12 @@ postgresql://dequorum_app:dev-only-not-for-prod@localhost:5432/dequorum
 
 ## Migrations
 
-Tree planned at `services/db/migrations/` (alembic). Not yet present. When it
-lands, the compose entrypoint will run `alembic upgrade head` against the
-`dequorum` database before the app starts.
+Alembic migrations live in
+[`services/app/src/dequorum/db/migrations/`](../app/src/dequorum/db/migrations/).
+The FastAPI app lifespan runs `alembic upgrade head` on startup, so a fresh
+database is ready to use without any manual step. To run migrations
+explicitly:
+
+```bash
+docker compose exec app uv run dequorum db upgrade
+```

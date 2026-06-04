@@ -34,6 +34,11 @@ DEFAULT_DATABASE_URL = (
 _pool: ConnectionPool | None = None
 
 
+def resolve_database_url(database_url: str | None = None) -> str:
+    """Resolve the DB URL from explicit arg, env, or built-in default."""
+    return database_url or os.environ.get("DEQUORUM_DATABASE_URL", DEFAULT_DATABASE_URL)
+
+
 def init_pool(database_url: str | None = None) -> ConnectionPool:
     """Initialize (or replace) the module-level pool.
 
@@ -42,7 +47,7 @@ def init_pool(database_url: str | None = None) -> ConnectionPool:
     against a locally-running compose `db` service.
     """
     global _pool
-    url = database_url or os.environ.get("DEQUORUM_DATABASE_URL", DEFAULT_DATABASE_URL)
+    url = resolve_database_url(database_url)
     if _pool is not None:
         _pool.close()
     _pool = ConnectionPool(conninfo=url, min_size=1, max_size=10, open=True)

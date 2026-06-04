@@ -1,12 +1,38 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>dequorum</title>
-  </head>
-  <body class="bg-slate-50">
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="color-scheme" content="light dark" />
+		<meta
+			name="description"
+			content="Crowdsourced AI where every answer is signed. Vote-decided truth, kickbacks to contributors, node hosters, and reviewers."
+		/>
+		<title>DeQuorum</title>
+		<!--
+			No-flash theme init. Reads stored preference (or system) and writes
+			data-theme BEFORE first paint, so the body's `visibility: hidden`
+			gate (see tokens.css) can lift immediately on the correct theme.
+		-->
+		<script>
+			(function () {
+				try {
+					var stored = localStorage.getItem("dequorum.theme");
+					var pref =
+						stored === "light" || stored === "dark"
+							? stored
+							: window.matchMedia("(prefers-color-scheme: dark)").matches
+								? "dark"
+								: "light";
+					document.documentElement.setAttribute("data-theme", pref);
+				} catch (_e) {
+					document.documentElement.setAttribute("data-theme", "light");
+				}
+			})();
+		</script>
+	</head>
+	<body>
+		<div id="root"></div>
+		<script type="module" src="/src/main.tsx"></script>
+	</body>
 </html>

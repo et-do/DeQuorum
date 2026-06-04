@@ -1,0 +1,45 @@
+/* Design tokens — semantic CSS variables that swap between light and dark.
+ *
+ * The dark theme is intentionally TRUE BLACK (#000) for an OLED-friendly,
+ * monospace-typography aesthetic that matches the Bittensor reference.
+ * Light theme is the inverse — pure white background, near-black text.
+ *
+ * Use these via Tailwind utility classes that reference the variables:
+ *   bg-bg, bg-bg-elevated, text-fg, text-fg-muted, border-border, ...
+ * which are exposed by the @theme block in index.css.
+ */
+
+:root {
+	color-scheme: light;
+	--bg: #ffffff;
+	--bg-elevated: #ffffff;
+	--bg-muted: #f5f5f5;
+	--fg: #0a0a0a;
+	--fg-muted: #525252;
+	--fg-subtle: #737373;
+	--border: #e5e5e5;
+	--border-strong: #d4d4d4;
+	--accent: #0a0a0a;
+	--accent-fg: #ffffff;
+}
+
+[data-theme="dark"] {
+	color-scheme: dark;
+	--bg: #000000;
+	--bg-elevated: #0a0a0a;
+	--bg-muted: #141414;
+	--fg: #fafafa;
+	--fg-muted: #a3a3a3;
+	--fg-subtle: #737373;
+	--border: #1f1f1f;
+	--border-strong: #2a2a2a;
+	--accent: #fafafa;
+	--accent-fg: #000000;
+}
+
+/* Prevent a flash of unstyled / wrong-themed content while the theme
+ * initializer is running in head. The body stays hidden until the script
+ * has set data-theme. See main.tsx for the inline init script. */
+html:not([data-theme]) body {
+	visibility: hidden;
+}

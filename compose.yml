@@ -44,13 +44,21 @@ services:
       # Keep this aligned with DEFAULT_BASE_MODEL_ID's ollama_tag in
       # services/app/src/dequorum/inference/models.py.
       OLLAMA_BOOTSTRAP_MODEL: "qwen2.5-coder:7b"
+      # GIN_MODE=release silences Ollama's per-request access log lines
+      # (`[GIN] ... | 200 | ... | "/api/tags"`). Errors still surface.
+      GIN_MODE: "release"
+      # OLLAMA_KEEP_ALIVE: how long a loaded model stays warm in memory.
+      # Default is 5m; "30m" keeps it ready across iterating dev queries.
+      OLLAMA_KEEP_ALIVE: "30m"
     ports:
       - "11434:11434"
     volumes:
       - ollama-models:/root/.ollama
+    # 30s interval is plenty — model bootstrap takes minutes, and the
+    # smaller interval was generating ~360 healthcheck log lines per hour.
     healthcheck:
       test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
-      interval: 10s
+      interval: 30s
       timeout: 5s
       retries: 10
       start_period: 60s
@@ -66,12 +74,14 @@ services:
       ollama:
         condition: service_started
     environment:
-      # Database connection (the app still uses SQLite until the Postgres
-      # port lands; this var is wired now so the future swap is config-only).
+      # Postgres URL. Read by AppConfig + Alembic + the CLI's _bootstrap.
       DEQUORUM_DATABASE_URL: "postgresql://dequorum_app:dev-only-not-for-prod@db:5432/dequorum"
-      # Inference target.
+      # Ollama inference target. Read by AppConfig (uses the compose-internal
+      # `ollama` hostname instead of the localhost default that would 404
+      # from inside the app container).
       DEQUORUM_OLLAMA_HOST: "http://ollama:11434"
-      # Auth emulator (the prod Firebase config takes over when this is unset).
+      # Firebase emulator. Picked up automatically by the Firebase SDK when
+      # this env var is set; cleared/unset in production to hit real Firebase.
       FIREBASE_AUTH_EMULATOR_HOST: "auth:9099"
       FIREBASE_PROJECT_ID: "dequorum-local"
     ports:
@@ -94,10 +104,18 @@ services:
     environment:
       VITE_PROXY_API_TARGET: "http://app:8000"
     volumes:
-      - ./services/frontend/src:/app/src
-      - ./services/frontend/index.html:/app/index.html
-      - ./services/frontend/vite.config.ts:/app/vite.config.ts
-      - ./services/frontend/tsconfig.json:/app/tsconfig.json
+      # Bind-mount the whole project so everything (src, config, generated
+      # routeTree.gen.ts, .tanstack/ tmp dir) lives on one filesystem.
+      # TanStack Router's generator uses atomic rename() and previously
+      # failed with EXDEV across the bind-mount boundary.
+      #
+      # Mount point is /workspace (not /app) so the URL /app doesn't
+      # collide with the container WORKDIR — Vite's filesystem resolver
+      # would otherwise try to read /app as a file and EISDIR.
+      - ./services/frontend:/workspace
+      # Anonymous volume preserves the container's npm-installed
+      # node_modules under the bind mount above.
+      - /workspace/node_modules
 
   # --- Caddy reverse proxy (local-only) ---------------------------------
   proxy:

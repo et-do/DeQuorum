@@ -1,16 +1,28 @@
-"""FastAPI app factory: routes for trace viewer, peer review, directories."""
+"""FastAPI app factory: JSON-only API at /v1/*.
+
+The frontend lives in services/frontend (React + Vite). This service emits
+no HTML — every route returns JSON. The Caddy reverse proxy strips `/api`
+before forwarding, so external URLs are `/api/v1/...` while FastAPI sees
+`/v1/...`.
+
+Real-time review queue updates are delivered via Server-Sent Events at
+`/v1/review/stream`; clients use the browser-native `EventSource` API or
+TanStack Query's streaming integrations.
+"""
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import json
 import os
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import asdict, dataclass, field
 
-from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
+from fastapi import Body, FastAPI, HTTPException, Path, Query
+from fastapi.responses import StreamingResponse
 
 from dequorum.core.errors import CompositionError
 from dequorum.db import (
@@ -26,21 +38,16 @@ from dequorum.experts import ExpertRegistry
 from dequorum.experts.seeds import build_seed_registry
 from dequorum.identity.agreement import current_agreement
 from dequorum.identity.contributor import Contributor, Tier
-from dequorum.identity.seeds import (
-    populate as populate_seed_contributors,
-)
-from dequorum.identity.seeds import (
-    seed_contributor_for,
-)
+from dequorum.identity.seeds import populate as populate_seed_contributors
+from dequorum.identity.seeds import seed_contributor_for
 from dequorum.inference.base_model import BaseModel, MockBaseModel, OllamaBaseModel
 from dequorum.inference.composition import make_strategy
 from dequorum.inference.pipeline import Pipeline
 from dequorum.intake import DuplicateDetector, SubmissionPipeline
 from dequorum.knowledge.seeds import populate as populate_seed_contributions
 from dequorum.knowledge.store import (
-    STATUS_APPROVED,
     STATUS_PENDING,
-    STATUS_REJECTED,
+    VALID_STATUSES,
 )
 from dequorum.retrieval import Retriever
 from dequorum.review.service import (
@@ -50,38 +57,31 @@ from dequorum.review.service import (
 )
 from dequorum.routing import EmbeddingRouter, KeywordRouter
 from dequorum.routing.embedder import SentenceTransformerEmbedder
-from dequorum.taxonomy.seeds import (
-    EXPERT_DEFAULT_CATEGORY,
-)
-from dequorum.taxonomy.seeds import (
-    populate as populate_seed_categories,
-)
-
-_TEMPLATES_DIR = Path(__file__).parent / "templates"
+from dequorum.taxonomy.seeds import EXPERT_DEFAULT_CATEGORY
+from dequorum.taxonomy.seeds import populate as populate_seed_categories
 
 
 @dataclass
 class AppConfig:
-    # Default to the env var so `uvicorn dequorum.web.app:create_app --factory`
-    # (i.e., when configure_app() isn't called first) still picks up the
-    # compose-set DEQUORUM_DATABASE_URL. Falls back to the localhost default
-    # for plain `dequorum serve` outside compose.
     database_url: str = field(
         default_factory=lambda: os.environ.get(
             "DEQUORUM_DATABASE_URL", DEFAULT_DATABASE_URL
         )
     )
     use_mock: bool = False
-    # Empty string = look up DEFAULT_BASE_MODEL_ID from inference/models.py
-    # at request time so changing the registry default takes effect without
-    # restarting the app's process state.
     ollama_model: str = ""
-    ollama_host: str = "http://localhost:11434"
+    # Honor DEQUORUM_OLLAMA_HOST so compose's "http://ollama:11434" reaches
+    # the app. Falls back to localhost for standalone `dequorum serve`.
+    ollama_host: str = field(
+        default_factory=lambda: os.environ.get(
+            "DEQUORUM_OLLAMA_HOST", "http://localhost:11434"
+        )
+    )
     top_k: int = 2
     retrieve_top_k: int = 3
-    router: str = "embedding"  # "embedding" | "keyword"
+    router: str = "embedding"
     min_score: float | None = None
-    composition: str = "pick_best"  # "pick_best" | "concat"
+    composition: str = "pick_best"
     extras: dict = field(default_factory=dict)
 
 
@@ -141,12 +141,7 @@ def _model() -> BaseModel:
 
 
 def _seed_if_empty() -> None:
-    """One-time seeding: agreements + contributors + contributions + categories.
-
-    Each store's `populate*` helper is idempotent: it inserts rows that aren't
-    already present. Safe to run every startup; the work is a few SELECT COUNTs
-    on a populated DB.
-    """
+    """Idempotent: insert seed rows only if their tables are empty."""
     with open_identity_store() as istore:
         istore.ensure_seed_agreements()
         if len(istore) == 0:
@@ -170,160 +165,165 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
         close_pool()
 
 
-def create_app() -> FastAPI:
-    app = FastAPI(title="dequorum", lifespan=_lifespan)
-    templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
-    templates.env.globals["STATUS_APPROVED"] = STATUS_APPROVED
-    templates.env.globals["STATUS_PENDING"] = STATUS_PENDING
-    templates.env.globals["STATUS_REJECTED"] = STATUS_REJECTED
-    templates.env.globals["APPROVAL_THRESHOLD"] = APPROVAL_THRESHOLD
-    templates.env.globals["REJECTION_THRESHOLD"] = REJECTION_THRESHOLD
+# --- serialization helpers ------------------------------------------------
 
+
+def _serialize_expert(expert: object) -> dict:
+    return {
+        "expert_id": expert.expert_id,  # type: ignore[attr-defined]
+        "display_name": expert.display_name,  # type: ignore[attr-defined]
+        "specialty_tags": list(expert.specialty_tags),  # type: ignore[attr-defined]
+        "prompt_digest": expert.prompt_digest,  # type: ignore[attr-defined]
+        "example_questions": list(getattr(expert, "example_questions", ()) or ()),
+    }
+
+
+def _serialize_contribution(c: object, status: str | None, tally: int) -> dict:
+    return {
+        "contribution_id": c.contribution_id,  # type: ignore[attr-defined]
+        "lineage_id": c.lineage_id,  # type: ignore[attr-defined]
+        "version_number": c.version_number,  # type: ignore[attr-defined]
+        "parent_version": c.parent_version,  # type: ignore[attr-defined]
+        "expert_id": c.expert_id,  # type: ignore[attr-defined]
+        "contributor_id": c.contributor_id,  # type: ignore[attr-defined]
+        "primary_category_id": c.primary_category_id,  # type: ignore[attr-defined]
+        "text": c.text,  # type: ignore[attr-defined]
+        "citations": list(c.citations),  # type: ignore[attr-defined]
+        "signature": asdict(c.signature),  # type: ignore[attr-defined]
+        "status": status,
+        "tally": tally,
+    }
+
+
+def _serialize_vote(v: object) -> dict:
+    return {
+        "vote_id": v.vote_id,  # type: ignore[attr-defined]
+        "contribution_id": v.contribution_id,  # type: ignore[attr-defined]
+        "voter_id": v.voter_id,  # type: ignore[attr-defined]
+        "score": v.score,  # type: ignore[attr-defined]
+        "signature": asdict(v.signature),  # type: ignore[attr-defined]
+    }
+
+
+def _serialize_contributor(c: object) -> dict:
+    return {
+        "contributor_id": c.contributor_id,  # type: ignore[attr-defined]
+        "display_name": c.display_name,  # type: ignore[attr-defined]
+        "tier": int(c.tier),  # type: ignore[attr-defined]
+        "tier_name": c.tier.name,  # type: ignore[attr-defined]
+        "agreement_version": c.agreement_version,  # type: ignore[attr-defined]
+        "vote_weight": c.vote_weight,  # type: ignore[attr-defined]
+        "daily_submission_cap": c.daily_submission_cap,  # type: ignore[attr-defined]
+        "has_email": c.email_hash is not None,  # type: ignore[attr-defined]
+        "created_at": c.created_at,  # type: ignore[attr-defined]
+    }
+
+
+def _serialize_category(cat: object) -> dict:
+    return {
+        "category_id": cat.category_id,  # type: ignore[attr-defined]
+        "parent_id": cat.parent_id,  # type: ignore[attr-defined]
+        "display_name": cat.display_name,  # type: ignore[attr-defined]
+        "depth": cat.depth,  # type: ignore[attr-defined]
+        "description": cat.description,  # type: ignore[attr-defined]
+    }
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="dequorum",
+        description="DeQuorum JSON API. UI is served by services/frontend (React).",
+        version="0.1.0",
+        lifespan=_lifespan,
+    )
     registry = build_seed_registry()
 
-    @app.get("/healthz", response_class=HTMLResponse)
-    def healthz() -> str:
-        return "ok"
+    # ---- health + meta ----
 
-    @app.get("/", response_class=HTMLResponse)
-    def index(request: Request) -> HTMLResponse:
-        with open_contribution_store() as store:
-            counts = {
-                "pending": len(store.list_by_status(STATUS_PENDING)),
-                "approved": len(store.list_by_status(STATUS_APPROVED)),
-                "rejected": len(store.list_by_status(STATUS_REJECTED)),
-            }
-        return templates.TemplateResponse(
-            request,
-            "index.html",
-            {
-                "experts": registry.all(),
-                "counts": counts,
-                "database_url": _config.database_url,
-                "use_mock": _config.use_mock,
-            },
-        )
+    @app.get("/v1/healthz", tags=["meta"])
+    def healthz() -> dict:
+        return {"status": "ok"}
 
-    @app.get("/experts", response_class=HTMLResponse)
-    def experts(request: Request) -> HTMLResponse:
-        return templates.TemplateResponse(
-            request,
-            "experts.html",
-            {"experts": registry.all()},
-        )
+    @app.get("/v1/meta", tags=["meta"])
+    def meta() -> dict:
+        return {
+            "database_url": _config.database_url,
+            "ollama_host": _config.ollama_host,
+            "use_mock": _config.use_mock,
+            "approval_threshold": APPROVAL_THRESHOLD,
+            "rejection_threshold": REJECTION_THRESHOLD,
+            "valid_statuses": sorted(VALID_STATUSES),
+        }
 
-    @app.get("/contributions", response_class=HTMLResponse)
-    def contributions_index(
-        request: Request,
-        expert: str | None = None,
-        status: str | None = None,
-    ) -> HTMLResponse:
+    # ---- experts ----
+
+    @app.get("/v1/experts", tags=["experts"])
+    def list_experts() -> list[dict]:
+        return [_serialize_expert(e) for e in registry.all()]
+
+    # ---- contributions ----
+
+    @app.get("/v1/contributions", tags=["contributions"])
+    def list_contributions(
+        expert: str | None = Query(None),
+        status: str | None = Query(None),
+        contributor: str | None = Query(None),
+        category: str | None = Query(None),
+        q: str | None = Query(
+            None, description="Case-insensitive substring match against text"
+        ),
+    ) -> list[dict]:
+        if status is not None and status not in VALID_STATUSES:
+            raise HTTPException(400, f"invalid status: {status!r}")
         with open_contribution_store() as store:
             if expert:
                 contribs = store.list_for_expert(expert, status=status)
+            elif contributor:
+                contribs = store.list_by_contributor(contributor)
+            elif category:
+                contribs = store.list_by_category(category, status=status)
             elif status:
                 contribs = store.list_by_status(status)
             else:
                 contribs = list(iter(store))
-            rows = [
-                {
-                    "contribution": c,
-                    "status": store.get_status(c.contribution_id),
-                    "tally": store.vote_tally(c.contribution_id),
-                }
+            if q:
+                needle = q.lower()
+                contribs = [c for c in contribs if needle in c.text.lower()]
+            return [
+                _serialize_contribution(
+                    c,
+                    store.get_status(c.contribution_id),
+                    store.vote_tally(c.contribution_id),
+                )
                 for c in contribs
             ]
-        return templates.TemplateResponse(
-            request,
-            "contributions.html",
-            {
-                "rows": rows,
-                "experts": registry.all(),
-                "filter_expert": expert,
-                "filter_status": status,
-            },
-        )
 
-    @app.get("/contributions/{contribution_id}", response_class=HTMLResponse)
-    def contribution_detail(request: Request, contribution_id: str) -> HTMLResponse:
+    @app.get("/v1/contributions/{contribution_id}", tags=["contributions"])
+    def get_contribution(contribution_id: str = Path(...)) -> dict:
         with open_contribution_store() as store:
             c = store.get(contribution_id)
             if c is None:
-                raise HTTPException(status_code=404, detail="contribution not found")
+                raise HTTPException(404, "contribution not found")
             status = store.get_status(contribution_id)
             tally = store.vote_tally(contribution_id)
-            votes = store.votes_for(contribution_id)
-        return templates.TemplateResponse(
-            request,
-            "contribution.html",
-            {
-                "c": c,
-                "status": status,
-                "tally": tally,
-                "votes": votes,
-                "experts": registry.all(),
-            },
-        )
+            votes = [_serialize_vote(v) for v in store.votes_for(contribution_id)]
+        return {
+            **_serialize_contribution(c, status, tally),
+            "votes": votes,
+        }
 
-    @app.get("/review", response_class=HTMLResponse)
-    def review_queue(request: Request) -> HTMLResponse:
-        with open_contribution_store() as store:
-            contribs = store.list_by_status(STATUS_PENDING)
-            rows = [
-                {
-                    "contribution": c,
-                    "tally": store.vote_tally(c.contribution_id),
-                    "votes": store.votes_for(c.contribution_id),
-                }
-                for c in contribs
-            ]
-        return templates.TemplateResponse(
-            request,
-            "review.html",
-            {"rows": rows, "experts": registry.all()},
-        )
-
-    @app.post("/contributions/{contribution_id}/vote")
-    def cast_vote(
-        contribution_id: str,
-        voter_id: str = Form(...),
-        score: int = Form(...),
-        next_url: str = Form("/review"),
-    ) -> RedirectResponse:
-        if voter_id not in registry:
-            raise HTTPException(status_code=400, detail=f"unknown voter: {voter_id!r}")
-        # Translate expert_id (form input) -> contributor_id + its signing key so
-        # the self-vote check works against the new contributor identity model.
-        voter_contributor, voter_key = seed_contributor_for(voter_id)
-        with open_contribution_store() as store:
-            service = ReviewService(store, registry=registry)
-            try:
-                service.cast_vote(
-                    contribution_id=contribution_id,
-                    voter_id=voter_contributor.contributor_id,
-                    score=score,
-                    signing_key=voter_key,
-                )
-            except CompositionError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return RedirectResponse(url=next_url, status_code=303)
-
-    @app.post("/contributions")
-    def submit_contribution(
-        expert_id: str = Form(...),
-        text: str = Form(...),
-        citations: str = Form(""),
-        category: str = Form(""),
-    ) -> RedirectResponse:
-        if expert_id not in registry:
-            raise HTTPException(
-                status_code=400, detail=f"unknown expert: {expert_id!r}"
-            )
+    @app.post("/v1/contributions", tags=["contributions"], status_code=201)
+    def submit_contribution(payload: dict = Body(...)) -> dict:
+        expert_id = payload.get("expert_id")
+        text = (payload.get("text") or "").strip()
+        citations = tuple(c.strip() for c in payload.get("citations", []) if c.strip())
+        category = (payload.get("primary_category_id") or "").strip()
+        if not expert_id or expert_id not in registry:
+            raise HTTPException(400, f"unknown expert: {expert_id!r}")
+        if not text:
+            raise HTTPException(400, "text is required")
         expert = registry.get(expert_id)
-        cite_list = tuple(
-            line.strip() for line in citations.splitlines() if line.strip()
-        )
-        category_id = category.strip() or EXPERT_DEFAULT_CATEGORY.get(
+        category_id = category or EXPERT_DEFAULT_CATEGORY.get(
             expert.expert_id, "uncategorized"
         )
         contributor, key = seed_contributor_for(expert.expert_id)
@@ -339,47 +339,168 @@ def create_app() -> FastAPI:
                     contributor=contributor,
                     contributor_signing_key=key,
                     expert_id=expert.expert_id,
-                    text=text.strip(),
-                    citations=cite_list,
+                    text=text,
+                    citations=citations,
                     primary_category_id=category_id,
                 )
             except CompositionError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return RedirectResponse(
-            url=f"/contributions/{result.contribution.contribution_id}",
-            status_code=303,
-        )
-
-    @app.get("/onboarding", response_class=HTMLResponse)
-    def onboarding_page(request: Request) -> HTMLResponse:
-        return templates.TemplateResponse(
-            request,
-            "onboarding.html",
-            {
-                "agreement": current_agreement(),
-                "tiers": list(Tier),
+                raise HTTPException(400, str(exc)) from exc
+            c = result.contribution
+            tally = store.vote_tally(c.contribution_id)
+            status = store.get_status(c.contribution_id)
+        return {
+            **_serialize_contribution(c, status, tally),
+            "duplicate_check": {
+                "band": result.duplicate_report.band.value,
+                "suggested_action": result.duplicate_report.suggested_action,
+                "top_candidates": [
+                    {
+                        "contribution_id": cand.contribution_id,
+                        "lineage_id": cand.lineage_id,
+                        "score": round(cand.score, 4),
+                        "text_preview": cand.text[:120],
+                    }
+                    for cand in result.duplicate_report.top_candidates
+                ],
             },
-        )
+        }
 
-    @app.post("/onboarding")
-    def onboarding_submit(
-        display_name: str = Form(...),
-        email: str = Form(""),
-    ) -> RedirectResponse:
-        import hashlib
-        import secrets
+    @app.post(
+        "/v1/contributions/{contribution_id}/votes",
+        tags=["contributions"],
+        status_code=201,
+    )
+    def cast_vote(
+        contribution_id: str = Path(...),
+        payload: dict = Body(...),
+    ) -> dict:
+        voter_id = payload.get("voter_id")
+        score = payload.get("score")
+        if voter_id is None or voter_id not in registry:
+            raise HTTPException(400, f"unknown voter: {voter_id!r}")
+        if score not in (-1, 0, 1):
+            raise HTTPException(400, "score must be -1, 0, or 1")
+        voter_contributor, voter_key = seed_contributor_for(voter_id)
+        with open_contribution_store() as store:
+            service = ReviewService(store, registry=registry)
+            try:
+                outcome = service.cast_vote(
+                    contribution_id=contribution_id,
+                    voter_id=voter_contributor.contributor_id,
+                    score=int(score),
+                    signing_key=voter_key,
+                )
+            except CompositionError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            tally = store.vote_tally(contribution_id)
+            status = store.get_status(contribution_id)
+        return {
+            "outcome": asdict(outcome),
+            "tally": tally,
+            "status": status,
+        }
+
+    # ---- review queue ----
+
+    @app.get("/v1/review", tags=["review"])
+    def review_queue() -> list[dict]:
+        with open_contribution_store() as store:
+            contribs = store.list_by_status(STATUS_PENDING)
+            return [
+                {
+                    **_serialize_contribution(
+                        c,
+                        STATUS_PENDING,
+                        store.vote_tally(c.contribution_id),
+                    ),
+                    "votes": [
+                        _serialize_vote(v) for v in store.votes_for(c.contribution_id)
+                    ],
+                }
+                for c in contribs
+            ]
+
+    @app.get("/v1/review/stream", tags=["review"])
+    async def review_stream() -> StreamingResponse:
+        """Server-Sent Events: emits the current queue every 2s.
+
+        Clients open this once and receive a stream of `data: <json>\\n\\n`
+        frames. Polling-via-stream is simpler than a real pub/sub and fits
+        the dev scale; swap for Redis pubsub when load demands it.
+        """
+
+        async def gen() -> AsyncIterator[bytes]:
+            previous: str | None = None
+            while True:
+                with open_contribution_store() as store:
+                    contribs = store.list_by_status(STATUS_PENDING)
+                    payload = [
+                        {
+                            **_serialize_contribution(
+                                c,
+                                STATUS_PENDING,
+                                store.vote_tally(c.contribution_id),
+                            ),
+                            "votes": [
+                                _serialize_vote(v)
+                                for v in store.votes_for(c.contribution_id)
+                            ],
+                        }
+                        for c in contribs
+                    ]
+                payload_str = json.dumps(payload)
+                if payload_str != previous:
+                    yield f"data: {payload_str}\n\n".encode()
+                    previous = payload_str
+                await asyncio.sleep(2)
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
+    # ---- contributors / onboarding ----
+
+    @app.get("/v1/contributors", tags=["contributors"])
+    def list_contributors() -> list[dict]:
+        with open_identity_store() as store:
+            return [_serialize_contributor(c) for c in store.list_all()]
+
+    @app.get("/v1/contributors/{contributor_id}", tags=["contributors"])
+    def get_contributor(contributor_id: str = Path(...)) -> dict:
+        with open_identity_store() as store:
+            contributor = store.get(contributor_id)
+            if contributor is None:
+                raise HTTPException(404, "contributor not found")
+        with open_contribution_store() as cstore:
+            their = cstore.list_by_contributor(contributor_id)
+            return {
+                **_serialize_contributor(contributor),
+                "contributions": [
+                    _serialize_contribution(
+                        c,
+                        cstore.get_status(c.contribution_id),
+                        cstore.vote_tally(c.contribution_id),
+                    )
+                    for c in their
+                ],
+            }
+
+    @app.post("/v1/contributors", tags=["contributors"], status_code=201)
+    def create_contributor(payload: dict = Body(...)) -> dict:
+        display_name = (payload.get("display_name") or "").strip()
+        email = (payload.get("email") or "").strip()
+        if not display_name:
+            raise HTTPException(400, "display_name is required")
 
         priv = secrets.token_bytes(32)
         pub = hashlib.blake2b(priv, digest_size=32).digest()
         email_hash = None
-        if email.strip():
+        if email:
             email_hash = hashlib.blake2b(
-                email.strip().lower().encode(), digest_size=16
+                email.lower().encode(), digest_size=16
             ).hexdigest()
 
         agreement = current_agreement()
         contributor = Contributor.create(
-            display_name=display_name.strip(),
+            display_name=display_name,
             public_key=pub,
             signing_key=priv,
             agreement_version=agreement.version,
@@ -389,73 +510,56 @@ def create_app() -> FastAPI:
         )
         with open_identity_store() as store:
             store.add(contributor)
-        return RedirectResponse(
-            url=f"/contributors/{contributor.contributor_id}",
-            status_code=303,
-        )
+        return {
+            **_serialize_contributor(contributor),
+            "private_key_hex": priv.hex(),  # dev only
+            "warning": (
+                "Save private_key_hex SECURELY. Real signups use client-side "
+                "WebCrypto and never transmit the private key over the wire."
+            ),
+        }
 
-    @app.get("/contributors/{contributor_id}", response_class=HTMLResponse)
-    def contributor_detail(request: Request, contributor_id: str) -> HTMLResponse:
-        with open_identity_store() as store:
-            contributor = store.get(contributor_id)
-            if contributor is None:
-                raise HTTPException(status_code=404, detail="contributor not found")
-        with open_contribution_store() as cstore:
-            their_contributions = cstore.list_by_contributor(contributor_id)
-        return templates.TemplateResponse(
-            request,
-            "contributor.html",
-            {
-                "contributor": contributor,
-                "contributions": their_contributions,
-            },
-        )
+    # ---- categories ----
 
-    @app.get("/categories", response_class=HTMLResponse)
-    def categories_page(request: Request) -> HTMLResponse:
+    @app.get("/v1/categories", tags=["taxonomy"])
+    def list_categories() -> list[dict]:
         with open_category_store() as store:
-            categories = store.all()
-        return templates.TemplateResponse(
-            request,
-            "categories.html",
-            {"categories": categories},
-        )
+            return [_serialize_category(c) for c in store.all()]
 
-    @app.get("/lineages/{lineage_id}", response_class=HTMLResponse)
-    def lineage_detail(request: Request, lineage_id: str) -> HTMLResponse:
+    # ---- lineages ----
+
+    @app.get("/v1/lineages/{lineage_id}", tags=["contributions"])
+    def get_lineage(lineage_id: str = Path(...)) -> dict:
         with open_contribution_store() as store:
             versions = store.list_for_lineage(lineage_id)
             if not versions:
-                raise HTTPException(status_code=404, detail="lineage not found")
+                raise HTTPException(404, "lineage not found")
             current = store.current_for_lineage(lineage_id)
             statuses = {
                 v.contribution_id: store.get_status(v.contribution_id) for v in versions
             }
-        return templates.TemplateResponse(
-            request,
-            "lineage.html",
-            {
+            return {
                 "lineage_id": lineage_id,
-                "versions": versions,
-                "current": current,
-                "statuses": statuses,
-            },
-        )
+                "current_contribution_id": (
+                    current.contribution_id if current else None
+                ),
+                "versions": [
+                    _serialize_contribution(
+                        v,
+                        statuses[v.contribution_id],
+                        store.vote_tally(v.contribution_id),
+                    )
+                    for v in versions
+                ],
+            }
 
-    @app.get("/query", response_class=HTMLResponse)
-    def query_form(request: Request) -> HTMLResponse:
-        return templates.TemplateResponse(
-            request,
-            "query.html",
-            {
-                "response": None,
-                "query_text": "",
-                "config": _config,
-            },
-        )
+    # ---- queries ----
 
-    @app.post("/query", response_class=HTMLResponse)
-    def query_submit(request: Request, text: str = Form(...)) -> HTMLResponse:
+    @app.post("/v1/queries", tags=["queries"])
+    def run_query(payload: dict = Body(...)) -> dict:
+        text = (payload.get("text") or "").strip()
+        if not text:
+            raise HTTPException(400, "text is required")
         with open_contribution_store() as store:
             pipeline = Pipeline(
                 router=_build_router(registry),
@@ -467,20 +571,58 @@ def create_app() -> FastAPI:
             )
             try:
                 response = pipeline.query(text)
-                error = None
             except CompositionError as exc:
-                response = None
-                error = str(exc)
-        return templates.TemplateResponse(
-            request,
-            "query.html",
-            {
-                "response": response,
-                "query_text": text,
-                "error": error,
-                "config": _config,
-                "ledger": pipeline.ledger.totals() if response else {},
+                raise HTTPException(400, str(exc)) from exc
+            ledger = pipeline.ledger.totals()
+        return {
+            "query": response.query,
+            "routing": {
+                "method": response.routing.method,
+                "matched_tags": list(response.routing.matched_tags),
+                "fallback_used": response.routing.fallback_used,
+                "threshold": response.routing.threshold,
+                "selected": [
+                    {"expert_id": s.expert.expert_id, "score": round(s.score, 4)}
+                    for s in response.routing.selected
+                ],
             },
-        )
+            "experts": [
+                {
+                    "expert_id": a.expert.expert_id,
+                    "routing_score": round(a.routing_score, 4),
+                    "answer": a.answer,
+                    "signature": asdict(a.signature),
+                    "retrieved": [
+                        {
+                            "contribution_id": sc.contribution.contribution_id,
+                            "contributor_id": sc.contribution.contributor_id,
+                            "score": round(sc.score, 4),
+                            "text": sc.contribution.text,
+                            "citations": list(sc.contribution.citations),
+                        }
+                        for sc in a.retrieved
+                    ],
+                }
+                for a in response.expert_answers
+            ],
+            "composition": {
+                "strategy": response.composition.strategy,
+                "chosen": list(response.composition.chosen),
+            },
+            "final_answer": response.final_answer,
+            "ledger": ledger,
+        }
+
+    # ---- agreement ----
+
+    @app.get("/v1/agreement", tags=["meta"])
+    def get_agreement() -> dict:
+        a = current_agreement()
+        return {
+            "version": a.version,
+            "text": a.text,
+            "effective_at": a.effective_at,
+            "tiers": [{"value": int(t), "name": t.name} for t in Tier],
+        }
 
     return app

@@ -4,10 +4,10 @@
 -- To re-run after editing, `docker compose down -v` to drop the db-data
 -- volume and bring the service back up.
 --
--- The actual schema (contributions, votes, contributors, agreements,
--- categories, lineages) is currently embedded in the Python store modules
--- and uses SQLite. The Postgres-port of that schema lands in a future phase
--- via an alembic migration tree under services/db/migrations/.
+-- Schema (contributions, votes, contributors, agreements, categories,
+-- lineages) lives in Alembic migrations under
+-- services/app/src/dequorum/db/migrations/. Applied automatically by the
+-- FastAPI app lifespan on first connect.
 
 -- Role must exist before we set it as the database OWNER below.
 CREATE ROLE dequorum_app WITH LOGIN PASSWORD 'dev-only-not-for-prod';

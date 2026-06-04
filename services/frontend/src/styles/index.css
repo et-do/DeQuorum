@@ -1,0 +1,49 @@
+/* Order matters:
+ *   1. Font import (IBM Plex Mono variable, self-hosted via fontsource).
+ *   2. Design tokens (CSS variables that swap on [data-theme]).
+ *   3. Tailwind 4 import — pulls in preflight + utilities.
+ *   4. @theme block — exposes our tokens as Tailwind utility colors so
+ *      `bg-bg text-fg border-border` etc. just work.
+ */
+
+/* @fontsource/ibm-plex-mono ships per-weight CSS files. Import the weights
+ * we actually use (400 regular for body, 700 bold for headings) to keep the
+ * font bundle small. */
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/700.css";
+@import "./tokens.css";
+@import "tailwindcss";
+
+@theme {
+	--font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+	--font-sans: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+	--color-bg: var(--bg);
+	--color-bg-elevated: var(--bg-elevated);
+	--color-bg-muted: var(--bg-muted);
+	--color-fg: var(--fg);
+	--color-fg-muted: var(--fg-muted);
+	--color-fg-subtle: var(--fg-subtle);
+	--color-border: var(--border);
+	--color-border-strong: var(--border-strong);
+	--color-accent: var(--accent);
+	--color-accent-fg: var(--accent-fg);
+}
+
+/* Base styles — applied to the whole document. Keep this list short;
+ * everything else lives in component utilities. */
+html,
+body {
+	background-color: var(--bg);
+	color: var(--fg);
+	font-family: var(--font-mono);
+	font-feature-settings: "ss01", "ss02", "ss03";
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+/* Selection retains the monochrome aesthetic. */
+::selection {
+	background: var(--fg);
+	color: var(--bg);
+}

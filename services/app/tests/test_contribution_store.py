@@ -52,7 +52,7 @@ def test_iter_all() -> None:
 
 def test_persistence_across_store_instances() -> None:
     # Two stores backed by the same Postgres database see each other's writes.
-    # (File-backed persistence on a SQLite path was the old shape; Postgres
+    # (File-backed persistence per-path was the old shape; Postgres
     # makes persistence implicit — every store sees the same DB.)
     c = _c("py", "persisted")
     with ContributionStore() as s1:

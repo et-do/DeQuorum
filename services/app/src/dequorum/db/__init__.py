@@ -21,6 +21,7 @@ from dequorum.db.pool import (
     open_category_store,
     open_contribution_store,
     open_identity_store,
+    resolve_database_url,
 )
 
 __all__ = [
@@ -31,4 +32,5 @@ __all__ = [
     "open_category_store",
     "open_contribution_store",
     "open_identity_store",
+    "resolve_database_url",
 ]

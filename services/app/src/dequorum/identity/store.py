@@ -38,10 +38,12 @@ class IdentityStore:
 
     def __init__(self, conn: psycopg.Connection | None = None) -> None:
         if conn is None:
-            from dequorum.db import get_pool
+            # No-arg mode opens a STANDALONE connection (not a pool checkout)
+            # so tests can do `store = X()` without leaking pool slots when
+            # they forget to call .close(). The connection closes on GC.
+            from dequorum.db import resolve_database_url
 
-            self._conn = get_pool().getconn()
-            self._conn.autocommit = True
+            self._conn = psycopg.connect(resolve_database_url(), autocommit=True)
             self._owns_conn = True
         else:
             self._conn = conn
@@ -49,10 +51,7 @@ class IdentityStore:
 
     def close(self) -> None:
         if self._owns_conn:
-            from dequorum.db import get_pool
-
-            self._conn.autocommit = False
-            get_pool().putconn(self._conn)
+            self._conn.close()
             self._owns_conn = False
 
     def __enter__(self) -> IdentityStore:

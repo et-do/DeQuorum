@@ -33,7 +33,7 @@ One internal smell: `app` currently does signing, voting, lineage, retrieval, ro
 
 | Service | What | Why |
 | --- | --- | --- |
-| **`ledger`** | Split out of `app`. FastAPI service with its own Cloud SQL schema (or SQLite-on-GCS for append-only audit log) | Once real money flows, payout ledger needs its own audit boundary and deploy cadence |
+| **`ledger`** | Split out of `app`. FastAPI service with its own Cloud SQL schema for append-only payout journals | Once real money flows, payout ledger needs its own audit boundary and deploy cadence |
 | **Redis (Memorystore)** | Cache hot query/answer pairs + sessions | Reuse the Redis from ARQ if we went that route |
 
 ### Defer

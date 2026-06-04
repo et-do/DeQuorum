@@ -5,23 +5,44 @@ on:
     branches: [main]
     paths:
       - "services/app/**"
+      - "services/db/**"
       - ".github/workflows/ci-python.yml"
   pull_request:
     paths:
       - "services/app/**"
+      - "services/db/**"
       - ".github/workflows/ci-python.yml"
   workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.13"]
     defaults:
       run:
         working-directory: services/app
+
+    # Tests need a real Postgres — conftest.py truncates between tests for
+    # isolation. Spin one up alongside the job; mirrors the compose dev setup.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: dev-only-not-for-prod
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      # conftest.py reads this; without it the URL would default to db:5432
+      # (compose-internal hostname, unreachable from the GHA runner).
+      DEQUORUM_TEST_DATABASE_URL: postgresql://dequorum_app:dev-only-not-for-prod@localhost:5432/dequorum_test
+
     steps:
       - uses: actions/checkout@v4
 
@@ -30,11 +51,20 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "services/app/uv.lock"
 
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
+      - name: Set up Python 3.13
+        run: uv python install 3.13
 
+      # No --frozen: pyproject.toml drift relative to uv.lock should re-lock,
+      # not fail the build, until the lockfile is reliably committed.
       - name: Install dependencies
-        run: uv sync --frozen --all-extras --dev
+        run: uv sync --all-extras --dev
+
+      - name: Bootstrap test database
+        env:
+          PGPASSWORD: dev-only-not-for-prod
+        run: |
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -f ../db/init/01-create-databases.sql
 
       - name: Ruff (lint)
         run: uv run ruff check src tests

@@ -51,8 +51,8 @@ Vite dev server and `/api/*` to the FastAPI app.
 | --- | --- | --- |
 | `db` | ~5s | Postgres init scripts create the `dequorum` + `dequorum_test` databases |
 | `ollama` | 5–10 min | Pulls `qwen2.5-coder:7b` (~5 GB). Persists in the `ollama-models` volume across restarts |
-| `app` | ~30s first build, ~5s on subsequent | First build: `uv sync` resolves deps + writes `services/app/uv.lock` back to host via the volume mount (commit it after first build for reproducible CI). On startup the FastAPI lifespan runs `alembic upgrade head` against the `db` service then seeds contributors/contributions/categories if their tables are empty. |
-| `frontend` | ~20s | `npm install` resolves and creates `package-lock.json`. **Commit the lockfile after the first compose run** so CI can switch to `npm ci` for faster builds (see §6). |
+| `app` | ~30s first build, ~5s on subsequent | First build: `uv sync` resolves deps + writes `services/app/uv.lock` back to host via the volume mount (commit it after first build for reproducible CI). On startup the FastAPI lifespan runs `alembic upgrade head` against the `db` service then seeds contributors/contributions/categories if their tables are empty. The app is **JSON-only** under `/v1/*` (no HTML, no Jinja). |
+| `frontend` | ~20s | First build: `npm install` resolves and writes `package-lock.json` back to host via the bind mount (commit it). Subsequent builds use `npm ci` automatically. Frontend serves both the marketing site at `/` and the app at `/app/*`. |
 | `proxy` | <1s | Caddy binary |
 | `auth` | ~30s | Firebase CLI downloads via npm |
 

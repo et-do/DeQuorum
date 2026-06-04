@@ -1,8 +1,12 @@
 name: docker-build
 
-# Build (don't push) every service's Docker image to catch broken Dockerfiles
-# and missing build-context files. Also validates compose.yml. No registry
-# auth required; uses GHA layer cache.
+# Validate that compose.yml parses and every service image builds. Was a
+# 7-image matrix; replaced with a single `compose build` because:
+#   - same coverage (any broken Dockerfile or missing build-context file
+#     fails the same way)
+#   - 5× faster wall-clock (one buildkit cache, one runner)
+#   - no app-prod-vs-dev split — the dev target catches all the Dockerfile
+#     issues we care about pre-deploy
 
 on:
   push:
@@ -22,37 +26,16 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        service:
-          - { name: app, context: services/app, target: dev }
-          - { name: app-prod, context: services/app, target: prod }
-          - { name: frontend, context: services/frontend, target: dev }
-          - { name: db, context: services/db, target: "" }
-          - { name: ollama, context: services/ollama, target: "" }
-          - { name: proxy, context: services/proxy, target: "" }
-          - { name: auth, context: services/auth, target: "" }
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build ${{ matrix.service.name }}
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.service.context }}
-          file: ${{ matrix.service.context }}/Dockerfile
-          target: ${{ matrix.service.target }}
-          push: false
-          load: true
-          tags: dequorum-${{ matrix.service.name }}:ci
-          cache-from: type=gha,scope=${{ matrix.service.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
-
-  compose-validate:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
       - name: Validate compose.yml
         run: docker compose -f compose.yml config --quiet
+
+      - name: Build all service images (no push)
+        env:
+          COMPOSE_BAKE: "true"
+          DOCKER_BUILDKIT: "1"
+        run: docker compose -f compose.yml build

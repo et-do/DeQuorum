@@ -12,7 +12,7 @@
 // end-to-end.
 
 Project DeQuorum {
-  database_type: "SQLite (v0.1) → Postgres (v1.0+)"
+  database_type: "Postgres 16 (Cloud SQL in production)"
   Note: '''
     Crowdsourced, peer-reviewed, attributable AI network.
     Every signed entity is content-addressed by a deterministic hash.

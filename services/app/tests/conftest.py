@@ -35,6 +35,11 @@ _TEST_DATABASE_URL = os.environ.get(
     "postgresql://dequorum_app:dev-only-not-for-prod@db:5432/dequorum_test",
 )
 
+# Stores constructed no-arg (`ContributionStore()`) open a standalone
+# connection and read DEQUORUM_DATABASE_URL to find the DB. Point it at
+# the test database so every test path lands in the same place.
+os.environ["DEQUORUM_DATABASE_URL"] = _TEST_DATABASE_URL
+
 # Truncation order is irrelevant with CASCADE, but listing every user-defined
 # table makes "what's in the DB" explicit. Keep in sync with the Alembic
 # migration in dequorum/db/migrations/versions/.
@@ -59,11 +64,19 @@ def _pg_pool() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _truncate_between_tests() -> Iterator[None]:
-    """Wipe all user tables before each test for isolation."""
+    """Wipe user tables, then re-seed the bootstrap agreement rows.
+
+    Agreements are network constants, not test fixtures — every store/route
+    that touches signatures assumes they're present. Re-seeding here keeps
+    individual tests free of identity-store-init boilerplate.
+    """
+    from dequorum.identity.store import IdentityStore
+
     pool = get_pool()
     truncate_sql = f"TRUNCATE TABLE {', '.join(_USER_TABLES)} RESTART IDENTITY CASCADE"
     with pool.connection() as conn:
         conn.execute(truncate_sql)
+        IdentityStore(conn).ensure_seed_agreements()
     yield
 
 

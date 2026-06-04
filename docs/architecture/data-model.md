@@ -9,7 +9,7 @@ Canonical reference: [data-model.dbml](data-model.dbml) (paste into [dbdiagram.i
 | `contributions` | Signed atomic factual claims. The unit of attribution and the unit of retrieval. |
 | `votes` | Signed +1/0/-1 votes on contributions. One slot per (contribution, voter). |
 
-That's it. Two tables. Everything else in the codebase — `Expert`, `ExpertRegistry`, `AttributionLedger`, `ProofObject`, signatures, the four invariants — lives in memory or in dataclass instances. SQLite holds only what needs to persist across runs (the signed claims and votes).
+That's it. Two tables. Everything else in the codebase — `Expert`, `ExpertRegistry`, `AttributionLedger`, `ProofObject`, signatures, the four invariants — lives in memory or in dataclass instances. Postgres holds only what needs to persist across runs (the signed claims and votes).
 
 ## Where each model class lives
 
@@ -22,7 +22,7 @@ The dataclasses are organized by domain, not centralized — each module owns th
 | `AttributionLedger` | `src/dequorum/core/ledger.py` | In-memory today; backed by `ledger_entries` table later (see DBML) |
 | `Contribution` | `src/dequorum/knowledge/contribution.py` | The atomic signed claim |
 | `STATUS_*` constants | `src/dequorum/knowledge/status.py` | `pending` / `approved` / `rejected`, extracted to break import cycles |
-| `ContributionStore` | `src/dequorum/knowledge/store.py` | SQLite-backed CRUD + the SQL schema itself |
+| `ContributionStore` | `src/dequorum/knowledge/store.py` | Postgres-backed CRUD; schema in `src/dequorum/db/migrations/` |
 | `Expert`, `ExpertRegistry` | `src/dequorum/experts/persona.py` | The persona behavior contract — `prompt_digest` covers what the expert *answers*, `example_questions` enriches routing only |
 | `Vote` | `src/dequorum/review/vote.py` | Signed vote slot |
 | `ReviewService`, `ReviewOutcome` | `src/dequorum/review/service.py` | Tally + status transitions |

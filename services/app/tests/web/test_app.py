@@ -1,3 +1,10 @@
+"""Tests for the JSON-only DeQuorum API.
+
+The UI lives in services/frontend; this app emits no HTML. Each test
+asserts on JSON response shape, not on markup. Routes are mounted under
+`/v1/*` and are reached via the Caddy proxy at `/api/v1/*` in production.
+"""
+
 from __future__ import annotations
 
 import os
@@ -11,11 +18,10 @@ from dequorum.web.app import configure_app, create_app
 @pytest.fixture()
 def client() -> TestClient:
     # conftest's session fixture has init'd the pool + applied migrations.
-    # The truncation fixture has wiped tables for this test. We seed
-    # manually here (bypassing the app lifespan, which TestClient only
-    # triggers when used as a context manager — and using `with TestClient`
-    # would re-init the pool and fight conftest's session-scoped one).
-    # Use the keyword router so we don't load sentence-transformers.
+    # The autouse truncation fixture has wiped tables; we seed manually
+    # here so the test database has the same fixture data the app would
+    # bootstrap on startup. Bypass the lifespan to avoid re-init'ing the
+    # session-scoped pool.
     from dequorum.web.app import _seed_if_empty
 
     test_url = os.environ.get(
@@ -34,77 +40,97 @@ def client() -> TestClient:
 
 
 def test_healthz(client: TestClient) -> None:
-    assert client.get("/healthz").text == "ok"
-
-
-def test_index_renders(client: TestClient) -> None:
-    r = client.get("/")
+    r = client.get("/v1/healthz")
     assert r.status_code == 200
-    assert "crowdsourced" in r.text.lower()
+    assert r.json() == {"status": "ok"}
 
 
-def test_experts_page(client: TestClient) -> None:
-    r = client.get("/experts")
+def test_meta(client: TestClient) -> None:
+    r = client.get("/v1/meta")
     assert r.status_code == 200
-    assert "python-typing" in r.text
+    body = r.json()
+    assert body["use_mock"] is True
+    assert "approval_threshold" in body
+    assert "valid_statuses" in body
 
 
-def test_contributions_list_shows_seeded(client: TestClient) -> None:
-    r = client.get("/contributions")
+def test_list_experts(client: TestClient) -> None:
+    r = client.get("/v1/experts")
     assert r.status_code == 200
-    # 25 seeded contributions = 25 rows. Status badges present.
-    assert "approved" in r.text
+    experts = r.json()
+    assert any(e["expert_id"] == "python-typing" for e in experts)
+    # Shape: each expert has the documented fields.
+    sample = experts[0]
+    assert {"expert_id", "display_name", "specialty_tags", "prompt_digest"} <= set(
+        sample
+    )
 
 
-def test_contributions_filter_by_status_rejected_is_empty(client: TestClient) -> None:
-    r = client.get("/contributions?status=rejected")
+def test_list_contributions_shows_seeded(client: TestClient) -> None:
+    r = client.get("/v1/contributions")
     assert r.status_code == 200
-    assert "no contributions match" in r.text
+    contribs = r.json()
+    assert len(contribs) > 0
+    assert all("status" in c and "tally" in c for c in contribs)
+
+
+def test_contributions_filter_by_status_rejected_is_empty(
+    client: TestClient,
+) -> None:
+    r = client.get("/v1/contributions?status=rejected")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_contributions_search_q_substring(client: TestClient) -> None:
+    r = client.get("/v1/contributions?q=python")
+    assert r.status_code == 200
+    contribs = r.json()
+    # All matches contain "python" in their text (case-insensitive).
+    for c in contribs:
+        assert "python" in c["text"].lower()
 
 
 def test_review_queue_empty_initially(client: TestClient) -> None:
-    r = client.get("/review")
+    r = client.get("/v1/review")
     assert r.status_code == 200
-    # All seeded are approved, so queue is empty
-    assert "No pending contributions" in r.text
+    assert r.json() == []
 
 
-def test_submit_then_review_then_vote_flow(client: TestClient) -> None:
-    # Submit a new contribution (must satisfy the 50-char minimum + HTTPS citation)
+def test_submit_then_vote_flow(client: TestClient) -> None:
     fact_text = (
         "Brand new typing fact: PEP 698 introduced typing.override "
         "as a decorator for enforcing override intent."
     )
     r = client.post(
-        "/contributions",
-        data={
+        "/v1/contributions",
+        json={
             "expert_id": "python-typing",
             "text": fact_text,
-            "citations": "https://peps.python.org/pep-0698/",
+            "citations": ["https://peps.python.org/pep-0698/"],
         },
-        follow_redirects=False,
     )
-    assert r.status_code == 303, r.text
-    detail_url = r.headers["location"]
-    contribution_id = detail_url.rsplit("/", 1)[-1]
+    assert r.status_code == 201, r.text
+    contribution_id = r.json()["contribution_id"]
 
-    # It appears in /review
-    r = client.get("/review")
-    assert "PEP 698" in r.text
+    # It appears in the review queue.
+    r = client.get("/v1/review")
+    assert any(c["contribution_id"] == contribution_id for c in r.json())
 
-    # Two distinct non-contributor experts vote +1 each
+    # Two distinct non-contributor experts vote +1 each.
     for voter in ("python-async", "python-packaging"):
         v = client.post(
-            f"/contributions/{contribution_id}/vote",
-            data={"voter_id": voter, "score": 1, "next_url": "/review"},
-            follow_redirects=False,
+            f"/v1/contributions/{contribution_id}/votes",
+            json={"voter_id": voter, "score": 1},
         )
-        assert v.status_code == 303
+        assert v.status_code == 201, v.text
 
-    # It's now approved
-    r = client.get(f"/contributions/{contribution_id}")
-    assert "approved" in r.text.lower()
-    assert "tally +2" in r.text
+    # Now approved.
+    r = client.get(f"/v1/contributions/{contribution_id}")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "approved"
+    assert body["tally"] == 2
 
 
 def test_self_voting_returns_400(client: TestClient) -> None:
@@ -113,54 +139,78 @@ def test_self_voting_returns_400(client: TestClient) -> None:
         "between mutable references at compile time."
     )
     r = client.post(
-        "/contributions",
-        data={
+        "/v1/contributions",
+        json={
             "expert_id": "rust-ownership",
             "text": fact_text,
-            "citations": "https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html",
+            "citations": [
+                "https://doc.rust-lang.org/book/ch04-02-references-and-borrowing.html",
+            ],
         },
-        follow_redirects=False,
     )
-    assert r.status_code == 303, r.text
-    contribution_id = r.headers["location"].rsplit("/", 1)[-1]
+    assert r.status_code == 201
+    contribution_id = r.json()["contribution_id"]
 
     v = client.post(
-        f"/contributions/{contribution_id}/vote",
-        data={"voter_id": "rust-ownership", "score": 1},
-        follow_redirects=False,
+        f"/v1/contributions/{contribution_id}/votes",
+        json={"voter_id": "rust-ownership", "score": 1},
     )
     assert v.status_code == 400
 
 
-def test_unknown_expert_vote_returns_400(client: TestClient) -> None:
-    # Vote on any existing contribution using a bogus voter
-    r = client.get("/contributions")
-    assert r.status_code == 200
-    # Pick the first seeded contribution by parsing a detail link
-    # Quick path: use list-contributions-style endpoint isn't there; use any id.
-    # Instead: post directly to a known seeded id is hard without inspection,
-    # so use a clearly nonexistent contribution id and expect 400 OR redirect.
+def test_unknown_voter_returns_400(client: TestClient) -> None:
     bad = client.post(
-        "/contributions/nonexistent/vote",
-        data={"voter_id": "no-such-expert", "score": 1},
-        follow_redirects=False,
+        "/v1/contributions/nonexistent/votes",
+        json={"voter_id": "no-such-expert", "score": 1},
     )
     assert bad.status_code == 400
 
 
-def test_query_form_renders(client: TestClient) -> None:
-    r = client.get("/query")
+def test_list_categories(client: TestClient) -> None:
+    r = client.get("/v1/categories")
     assert r.status_code == 200
-    assert "Ask the network" in r.text
+    cats = r.json()
+    assert any(c["category_id"] == "uncategorized" for c in cats)
 
 
-def test_query_with_mock_model_renders_trace(client: TestClient) -> None:
+def test_list_contributors(client: TestClient) -> None:
+    r = client.get("/v1/contributors")
+    assert r.status_code == 200
+    assert len(r.json()) > 0
+
+
+def test_create_contributor_signup_flow(client: TestClient) -> None:
     r = client.post(
-        "/query",
-        data={"text": "python typing generator"},
-        follow_redirects=False,
+        "/v1/contributors",
+        json={"display_name": "Test User", "email": "test@example.com"},
     )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["display_name"] == "Test User"
+    assert body["has_email"] is True
+    assert body["tier_name"] == "EMAIL_VERIFIED"
+    assert "private_key_hex" in body
+
+
+def test_create_contributor_requires_display_name(client: TestClient) -> None:
+    r = client.post("/v1/contributors", json={})
+    assert r.status_code == 400
+
+
+def test_query_with_mock_model(client: TestClient) -> None:
+    r = client.post("/v1/queries", json={"text": "python typing generator"})
     assert r.status_code == 200
-    # Mock model is deterministic; we should see ledger credits and proof chain
-    assert "Proof chain" in r.text
-    assert "Ledger credits" in r.text
+    body = r.json()
+    assert "final_answer" in body
+    assert "routing" in body
+    assert "experts" in body
+    assert "ledger" in body
+
+
+def test_agreement(client: TestClient) -> None:
+    r = client.get("/v1/agreement")
+    assert r.status_code == 200
+    body = r.json()
+    assert "version" in body
+    assert "text" in body
+    assert any(t["name"] == "ANONYMOUS" for t in body["tiers"])
