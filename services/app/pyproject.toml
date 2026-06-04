@@ -18,7 +18,7 @@ dependencies = [
     # Web stack — JSON-only API. UI lives in services/frontend (React),
     # so no Jinja templates or form-data parsing in this service.
     "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
+    "uvicorn[standard]>=0.49.0",
     "pydantic>=2.12",
     "pydantic-settings>=2.13",
     # Database
