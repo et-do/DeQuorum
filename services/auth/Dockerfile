@@ -5,7 +5,7 @@
 # real Firebase Auth — the DeQuorum app talks to either through the same
 # REST endpoints, so swapping is configuration only.
 
-FROM node:22-bookworm-slim
+FROM node:26-bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 
