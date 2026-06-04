@@ -1,0 +1,14 @@
+# typos config. Keep allowed-word lists narrow — the goal is to silence
+# specific false positives, not loosen the whole spell check.
+
+[default.extend-words]
+# `nd` appears in big-O notation like `O(nd)`; typos would rewrite to "and".
+nd = "nd"
+
+[files]
+# Archived notes and research markdown contain a lot of math notation,
+# variable names, and quoted shell output that typos misreads.
+extend-exclude = [
+    "archive/**",
+    "docs/research/**",
+]

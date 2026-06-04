@@ -1,39 +1,41 @@
-"""SQLite-backed store for the category taxonomy."""
+"""Postgres-backed store for the category taxonomy.
+
+See `dequorum.identity.store.IdentityStore` for the two construction
+modes (caller-owned connection vs. auto-borrowed-from-pool). Schema is
+owned by Alembic migrations under `dequorum.db.migrations`.
+"""
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 from types import TracebackType
+
+import psycopg
 
 from dequorum.taxonomy.category import Category
 
-_TABLES = """
-CREATE TABLE IF NOT EXISTS categories (
-    category_id   TEXT PRIMARY KEY,
-    parent_id     TEXT,
-    display_name  TEXT NOT NULL,
-    description   TEXT NOT NULL DEFAULT '',
-    FOREIGN KEY (parent_id) REFERENCES categories(category_id)
-);
-"""
-
-_INDEXES = """
-CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(parent_id);
-"""
-
 
 class CategoryStore:
-    """SQLite-backed CRUD over the category taxonomy."""
+    """CRUD over the category taxonomy."""
 
-    def __init__(self, path: str | Path = ":memory:") -> None:
-        self._conn = sqlite3.connect(str(path))
-        self._conn.executescript(_TABLES)
-        self._conn.executescript(_INDEXES)
+    def __init__(self, conn: psycopg.Connection | None = None) -> None:
+        if conn is None:
+            from dequorum.db import get_pool
+
+            self._conn = get_pool().getconn()
+            self._conn.autocommit = True
+            self._owns_conn = True
+        else:
+            self._conn = conn
+            self._owns_conn = False
 
     def close(self) -> None:
-        self._conn.close()
+        if self._owns_conn:
+            from dequorum.db import get_pool
+
+            self._conn.autocommit = False
+            get_pool().putconn(self._conn)
+            self._owns_conn = False
 
     def __enter__(self) -> CategoryStore:
         return self
@@ -47,23 +49,26 @@ class CategoryStore:
         self.close()
 
     def add(self, category: Category) -> None:
-        with self._conn:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO categories "
-                "(category_id, parent_id, display_name, description) "
-                "VALUES (?, ?, ?, ?)",
-                (
-                    category.category_id,
-                    category.parent_id,
-                    category.display_name,
-                    category.description,
-                ),
-            )
+        self._conn.execute(
+            """INSERT INTO categories
+            (category_id, parent_id, display_name, description)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (category_id) DO UPDATE SET
+                parent_id    = EXCLUDED.parent_id,
+                display_name = EXCLUDED.display_name,
+                description  = EXCLUDED.description""",
+            (
+                category.category_id,
+                category.parent_id,
+                category.display_name,
+                category.description,
+            ),
+        )
 
     def get(self, category_id: str) -> Category | None:
         row = self._conn.execute(
             "SELECT category_id, parent_id, display_name, description "
-            "FROM categories WHERE category_id = ?",
+            "FROM categories WHERE category_id = %s",
             (category_id,),
         ).fetchone()
         return _row_to_category(row) if row else None
@@ -84,7 +89,7 @@ class CategoryStore:
         else:
             rows = self._conn.execute(
                 "SELECT category_id, parent_id, display_name, description "
-                "FROM categories WHERE parent_id = ? ORDER BY category_id",
+                "FROM categories WHERE parent_id = %s ORDER BY category_id",
                 (category_id,),
             ).fetchall()
         return [_row_to_category(r) for r in rows]
@@ -93,7 +98,9 @@ class CategoryStore:
         return iter(self.all())
 
     def __len__(self) -> int:
-        return int(self._conn.execute("SELECT COUNT(*) FROM categories").fetchone()[0])
+        row = self._conn.execute("SELECT COUNT(*) FROM categories").fetchone()
+        assert row is not None
+        return int(row[0])
 
     def __contains__(self, category_id: object) -> bool:
         if not isinstance(category_id, str):

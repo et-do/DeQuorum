@@ -1,0 +1,22 @@
+name: stale
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  stale:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-stale: 60
+          days-before-close: 14
+          stale-issue-message: "No activity in 60 days. Closing in 14 unless updated."
+          stale-pr-message: "No activity in 60 days. Closing in 14 unless updated."
+          exempt-issue-labels: "pinned,roadmap"
+          exempt-pr-labels: "blocked"

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+import os
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,16 +9,27 @@ from dequorum.web.app import configure_app, create_app
 
 
 @pytest.fixture()
-def client(tmp_path: Path) -> TestClient:
-    db = tmp_path / "dequorum.db"
-    # Use keyword router in tests so we don't load the sentence-transformers model.
+def client() -> TestClient:
+    # conftest's session fixture has init'd the pool + applied migrations.
+    # The truncation fixture has wiped tables for this test. We seed
+    # manually here (bypassing the app lifespan, which TestClient only
+    # triggers when used as a context manager — and using `with TestClient`
+    # would re-init the pool and fight conftest's session-scoped one).
+    # Use the keyword router so we don't load sentence-transformers.
+    from dequorum.web.app import _seed_if_empty
+
+    test_url = os.environ.get(
+        "DEQUORUM_TEST_DATABASE_URL",
+        "postgresql://dequorum_app:dev-only-not-for-prod@db:5432/dequorum_test",
+    )
     configure_app(
-        db_path=str(db),
+        database_url=test_url,
         use_mock=True,
         router="keyword",
         min_score=1.0,
         composition="pick_best",
     )
+    _seed_if_empty()
     return TestClient(create_app())
 
 

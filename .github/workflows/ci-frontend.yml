@@ -1,0 +1,46 @@
+name: ci-frontend
+
+# Frontend CI runs npm install rather than npm ci until a package-lock.json
+# is committed. The lockfile is generated on first `docker compose up` of
+# the frontend service (or by running `npm install` locally); once committed,
+# switch this workflow to `npm ci` and re-enable setup-node's `cache: npm`
+# for faster runs.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/frontend/**"
+      - ".github/workflows/ci-frontend.yml"
+  pull_request:
+    paths:
+      - "services/frontend/**"
+      - ".github/workflows/ci-frontend.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install --no-audit --no-fund
+          fi
+
+      - name: TypeScript check
+        run: npx tsc --noEmit
+
+      - name: Build
+        run: npm run build

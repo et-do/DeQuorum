@@ -36,6 +36,6 @@ localhost:8000 outside compose, configurable via `VITE_PROXY_API_TARGET`).
 ## Future phases
 
 - Replace the dashboard tiles with a real query interface
-- Add Firebase Auth integration against `services/auth-emulator`
+- Add Firebase Auth integration against `services/auth`
 - Implement client-side keypair generation + agreement signing
 - Build the contributor profile, review queue, and lineage views

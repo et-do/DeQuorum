@@ -1,0 +1,24 @@
+# hadolint config — disables rules that don't earn their keep here.
+#
+#   DL3008 — pin apt-get versions. Debian apt versions move with security
+#            updates; pinning every package leads to constant breakage and
+#            no real reproducibility benefit (the base image tag is what
+#            we pin).
+#   DL3016 — pin npm versions. Same reasoning for the firebase-tools install
+#            in services/auth/Dockerfile.
+#   DL4006 — set SHELL with pipefail before piped RUN. Our piped RUN is the
+#            uv installer (`curl | sh`); failing fast on a curl error during
+#            base build is fine, and it's a single-line install.
+ignored:
+  - DL3008
+  - DL3016
+  - DL4006
+  # `:latest` is fine for the ollama base image in this stage — we control
+  # the bootstrap model via env (`OLLAMA_BOOTSTRAP_MODEL`) and the inference
+  # contract via DeQuorum's model registry, not the image tag. Revisit when
+  # production pins matter.
+  - DL3007
+  # shellcheck SC2215 fires inside hadolint when parsing BuildKit cache-mount
+  # syntax (`RUN --mount=type=cache,...`) because shellcheck thinks
+  # `--mount=...` is a command. Known false positive.
+  - SC2215

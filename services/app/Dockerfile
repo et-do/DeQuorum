@@ -25,11 +25,22 @@ WORKDIR /app
 FROM base AS dev
 
 # Install dependencies (no source copy — that's mounted at runtime by compose).
-COPY pyproject.toml uv.lock README.md ./
-RUN uv sync --extra dev --no-install-project --frozen
+# `--frozen` is omitted here so uv re-locks if pyproject.toml drifted from
+# uv.lock. The lockfile is bind-mounted from the host in compose, so any
+# re-lock propagates back automatically.
+#
+# The uv cache mount keeps downloaded wheels across builds. Without it,
+# every rebuild re-downloads ~2 GB of torch/transformers/chromadb wheels.
+# With it, only changed deps re-download.
+COPY pyproject.toml README.md ./
+COPY uv.lock* ./
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked \
+    uv sync --extra dev --no-install-project
 
 # When source is mounted, install the package in editable mode at start.
-CMD ["sh", "-c", "uv sync --extra dev --frozen && exec uv run uvicorn dequorum.web.app:create_app --factory --host 0.0.0.0 --port 8000 --reload"]
+# The sync here is fast (just installs the editable project itself); the
+# heavy deps were already installed at build time and live in /app/.venv.
+CMD ["sh", "-c", "uv sync --extra dev --inexact && exec uv run uvicorn dequorum.web.app:create_app --factory --host 0.0.0.0 --port 8000 --reload"]
 
 
 # --- prod: built wheel, slim runtime -------------------------------------

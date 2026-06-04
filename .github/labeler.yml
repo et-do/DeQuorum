@@ -1,0 +1,42 @@
+app:
+  - changed-files:
+      - any-glob-to-any-file: "services/app/**"
+
+frontend:
+  - changed-files:
+      - any-glob-to-any-file: "services/frontend/**"
+
+db:
+  - changed-files:
+      - any-glob-to-any-file: "services/db/**"
+
+ollama:
+  - changed-files:
+      - any-glob-to-any-file: "services/ollama/**"
+
+auth:
+  - changed-files:
+      - any-glob-to-any-file: "services/auth/**"
+
+proxy:
+  - changed-files:
+      - any-glob-to-any-file: "services/proxy/**"
+
+docker:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/Dockerfile"
+          - "**/Dockerfile.*"
+          - "compose.yml"
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file: "docs/**"
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: ".github/**"
+
+devcontainer:
+  - changed-files:
+      - any-glob-to-any-file: ".devcontainer/**"

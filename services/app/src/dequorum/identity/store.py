@@ -1,11 +1,29 @@
-"""SQLite-backed store for contributors + agreements."""
+"""Postgres-backed store for contributors + agreements.
+
+Two construction modes:
+
+  - `IdentityStore(conn)` — borrow a `psycopg.Connection` from the caller.
+    Production code uses this via `dequorum.db.open_identity_store()`,
+    which checks the connection out of the pool and manages transaction
+    boundaries (commit on success, rollback on exception).
+
+  - `IdentityStore()` — auto-borrow a connection from the global pool with
+    autocommit=True. The store owns the connection and releases it back
+    on `close()` / `__exit__`. Convenient for tests and quick scripts; do
+    not use in production code paths because each statement commits
+    independently.
+
+Schema is owned by Alembic migrations under `dequorum.db.migrations`;
+construction here does NOT create tables. Run `dequorum db upgrade` (or
+let the FastAPI app startup hook run) first.
+"""
 
 from __future__ import annotations
 
-import sqlite3
 from collections.abc import Iterator
-from pathlib import Path
 from types import TracebackType
+
+import psycopg
 
 from dequorum.core.node import Signature
 from dequorum.identity.agreement import (
@@ -14,55 +32,28 @@ from dequorum.identity.agreement import (
 )
 from dequorum.identity.contributor import Contributor, Tier
 
-_TABLES = """
-CREATE TABLE IF NOT EXISTS contributors (
-    contributor_id        TEXT PRIMARY KEY,
-    display_name          TEXT NOT NULL,
-    public_key            BLOB NOT NULL,
-    tier                  INTEGER NOT NULL,
-    agreement_version     TEXT NOT NULL,
-    agreement_sig_node    TEXT NOT NULL,
-    agreement_sig_input   TEXT NOT NULL,
-    agreement_sig_output  TEXT NOT NULL,
-    agreement_sig_digest  TEXT NOT NULL,
-    email_hash            TEXT,
-    created_at            INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS agreements (
-    version       TEXT PRIMARY KEY,
-    text          TEXT NOT NULL,
-    text_hash     TEXT NOT NULL,
-    effective_at  INTEGER NOT NULL
-);
-"""
-
-_INDEXES = """
-CREATE INDEX IF NOT EXISTS idx_contributors_tier ON contributors(tier);
-CREATE INDEX IF NOT EXISTS idx_contributors_email ON contributors(email_hash);
-"""
-
 
 class IdentityStore:
-    """SQLite-backed store of contributors + the agreement versions they signed."""
+    """CRUD over contributors + the agreement versions they signed."""
 
-    def __init__(self, path: str | Path = ":memory:") -> None:
-        self._conn = sqlite3.connect(str(path))
-        self._conn.executescript(_TABLES)
-        self._conn.executescript(_INDEXES)
-        self._populate_seed_agreements()
+    def __init__(self, conn: psycopg.Connection | None = None) -> None:
+        if conn is None:
+            from dequorum.db import get_pool
 
-    def _populate_seed_agreements(self) -> None:
-        with self._conn:
-            for a in SEED_AGREEMENTS:
-                self._conn.execute(
-                    "INSERT OR IGNORE INTO agreements "
-                    "(version, text, text_hash, effective_at) VALUES (?, ?, ?, ?)",
-                    (a.version, a.text, a.text_hash, a.effective_at),
-                )
+            self._conn = get_pool().getconn()
+            self._conn.autocommit = True
+            self._owns_conn = True
+        else:
+            self._conn = conn
+            self._owns_conn = False
 
     def close(self) -> None:
-        self._conn.close()
+        if self._owns_conn:
+            from dequorum.db import get_pool
+
+            self._conn.autocommit = False
+            get_pool().putconn(self._conn)
+            self._owns_conn = False
 
     def __enter__(self) -> IdentityStore:
         return self
@@ -75,11 +66,23 @@ class IdentityStore:
     ) -> None:
         self.close()
 
+    def ensure_seed_agreements(self) -> None:
+        """Insert the module-level SEED_AGREEMENTS if they don't already exist.
+
+        Called once at app startup. Safe to re-run; conflicts are no-ops.
+        """
+        for a in SEED_AGREEMENTS:
+            self._conn.execute(
+                "INSERT INTO agreements (version, text, text_hash, effective_at) "
+                "VALUES (%s, %s, %s, %s) ON CONFLICT (version) DO NOTHING",
+                (a.version, a.text, a.text_hash, a.effective_at),
+            )
+
     # --- agreements ---
 
     def get_agreement(self, version: str) -> AgreementVersion | None:
         row = self._conn.execute(
-            "SELECT version, text, effective_at FROM agreements WHERE version = ?",
+            "SELECT version, text, effective_at FROM agreements WHERE version = %s",
             (version,),
         ).fetchone()
         if row is None:
@@ -90,64 +93,79 @@ class IdentityStore:
 
     def add(self, contributor: Contributor) -> None:
         sig = contributor.agreement_signature
-        with self._conn:
-            self._conn.execute(
-                """INSERT OR REPLACE INTO contributors (
-                    contributor_id, display_name, public_key, tier,
-                    agreement_version,
-                    agreement_sig_node, agreement_sig_input,
-                    agreement_sig_output, agreement_sig_digest,
-                    email_hash, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    contributor.contributor_id,
-                    contributor.display_name,
-                    contributor.public_key,
-                    int(contributor.tier),
-                    contributor.agreement_version,
-                    sig.node_id,
-                    sig.input_hash,
-                    sig.output_hash,
-                    sig.digest,
-                    contributor.email_hash,
-                    contributor.created_at,
-                ),
-            )
+        self._conn.execute(
+            """INSERT INTO contributors (
+                contributor_id, display_name, public_key, tier,
+                agreement_version,
+                agreement_sig_node, agreement_sig_input,
+                agreement_sig_output, agreement_sig_digest,
+                email_hash, created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (contributor_id) DO UPDATE SET
+                display_name         = EXCLUDED.display_name,
+                public_key           = EXCLUDED.public_key,
+                tier                 = EXCLUDED.tier,
+                agreement_version    = EXCLUDED.agreement_version,
+                agreement_sig_node   = EXCLUDED.agreement_sig_node,
+                agreement_sig_input  = EXCLUDED.agreement_sig_input,
+                agreement_sig_output = EXCLUDED.agreement_sig_output,
+                agreement_sig_digest = EXCLUDED.agreement_sig_digest,
+                email_hash           = EXCLUDED.email_hash,
+                created_at           = EXCLUDED.created_at""",
+            (
+                contributor.contributor_id,
+                contributor.display_name,
+                contributor.public_key,
+                int(contributor.tier),
+                contributor.agreement_version,
+                sig.node_id,
+                sig.input_hash,
+                sig.output_hash,
+                sig.digest,
+                contributor.email_hash,
+                contributor.created_at,
+            ),
+        )
 
     def get(self, contributor_id: str) -> Contributor | None:
         row = self._conn.execute(
-            "SELECT * FROM contributors WHERE contributor_id = ?",
+            "SELECT contributor_id, display_name, public_key, tier, "
+            "agreement_version, agreement_sig_node, agreement_sig_input, "
+            "agreement_sig_output, agreement_sig_digest, email_hash, created_at "
+            "FROM contributors WHERE contributor_id = %s",
             (contributor_id,),
         ).fetchone()
         return _row_to_contributor(row) if row else None
 
     def list_all(self) -> list[Contributor]:
         rows = self._conn.execute(
-            "SELECT * FROM contributors ORDER BY contributor_id"
+            "SELECT contributor_id, display_name, public_key, tier, "
+            "agreement_version, agreement_sig_node, agreement_sig_input, "
+            "agreement_sig_output, agreement_sig_digest, email_hash, created_at "
+            "FROM contributors ORDER BY contributor_id"
         ).fetchall()
         return [_row_to_contributor(r) for r in rows]
 
     def set_tier(self, contributor_id: str, tier: Tier) -> None:
-        with self._conn:
-            self._conn.execute(
-                "UPDATE contributors SET tier = ? WHERE contributor_id = ?",
-                (int(tier), contributor_id),
-            )
+        self._conn.execute(
+            "UPDATE contributors SET tier = %s WHERE contributor_id = %s",
+            (int(tier), contributor_id),
+        )
 
     def __iter__(self) -> Iterator[Contributor]:
         return iter(self.list_all())
 
     def __len__(self) -> int:
-        return int(
-            self._conn.execute("SELECT COUNT(*) FROM contributors").fetchone()[0]
-        )
+        row = self._conn.execute("SELECT COUNT(*) FROM contributors").fetchone()
+        assert row is not None
+        return int(row[0])
 
 
 def _row_to_contributor(row: tuple) -> Contributor:
     return Contributor(
         contributor_id=row[0],
         display_name=row[1],
-        public_key=row[2],
+        public_key=bytes(row[2]),
         tier=Tier(int(row[3])),
         agreement_version=row[4],
         agreement_signature=Signature(

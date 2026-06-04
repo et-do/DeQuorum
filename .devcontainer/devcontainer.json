@@ -1,48 +1,63 @@
 {
-    "name": "Dev Container",
+    "name": "DeQuorum Dev Env",
     "build": { "dockerfile": "Dockerfile" },
     "features": {
-        "ghcr.io/devcontainers-extra/features/uv:1": {},
+        "ghcr.io/devcontainers/features/git:1": {},
         "ghcr.io/devcontainers/features/github-cli:1": {},
-        "ghcr.io/devcontainers/features/node:1": { "version": "22" },
-        "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+        // moby:false -> Docker CE packages (docker.com apt repo) instead of
+        // Moby. Moby's apt packages aren't published for Debian 13 "trixie"
+        // (the current :debian base tag), so the default moby:true fails to
+        // install. Same Apache-2.0 engine; only the package source differs.
+        "ghcr.io/devcontainers/features/docker-in-docker:2": { "moby": false },
+        "ghcr.io/devcontainers/features/python:1": { "version": "3.13", "installTools": false }
     },
-    // Named volumes so host doesn't conflict, and so caches survive rebuilds.
-    // .venv lives under services/app/ now (the Python package moved into the app service).
+    // We deliberately don't install uv / node / etc. here — language runtimes
+    // live in their service containers (services/app uses uv, services/frontend
+    // uses node, etc.). Python is here only so pre-commit can run (some hooks
+    // are Python packages: yamllint, validate-pyproject, pre-commit-hooks).
     "mounts": [
-        "source=${localWorkspaceFolderBasename}-venv,target=${containerWorkspaceFolder}/services/app/.venv,type=volume",
-        "source=${localWorkspaceFolderBasename}-node-modules,target=${containerWorkspaceFolder}/services/frontend/node_modules,type=volume",
-        "source=${localWorkspaceFolderBasename}-claude,target=/home/vscode/.claude,type=volume",
-        "source=${localWorkspaceFolderBasename}-ollama,target=/home/vscode/.ollama,type=volume"
+        "source=${localWorkspaceFolderBasename}-claude,target=/home/vscode/.claude,type=volume"
     ],
-    "forwardPorts": [80, 5173, 8000, 9099, 11434, 4000],
-    "postCreateCommand": "sudo chown -R vscode:vscode services/app/.venv services/frontend/node_modules /home/vscode/.claude /home/vscode/.ollama && cd services/app && UV_LINK_MODE=copy uv sync --extra dev && cd ../frontend && npm install --no-audit --no-fund && cd ../.. && (cd services/app && uv run pre-commit install) || true",
-    "postStartCommand": "pgrep -x ollama > /dev/null || (nohup ollama serve > /tmp/ollama.log 2>&1 & disown)",
+    "forwardPorts": [80, 4000, 5173, 5432, 8000, 9099, 11434],
+    "portsAttributes": {
+        "80":    { "label": "Caddy proxy (/ → frontend, /api → app)" },
+        "4000":  { "label": "Firebase Auth emulator UI" },
+        "5173":  { "label": "Vite dev server (frontend)" },
+        "5432":  { "label": "Postgres" },
+        "8000":  { "label": "FastAPI app (direct)" },
+        "9099":  { "label": "Firebase Auth REST" },
+        "11434": { "label": "Ollama" }
+    },
+    // Install pre-commit to the vscode user's ~/.local/bin. We can't `sudo
+    // python3 ...` here because the python feature installs python3 under
+    // /usr/local/python/current/bin, which is on the user PATH but NOT on
+    // sudo's secure_path — `sudo python3` fails to find the binary. Running
+    // unsudo'd as the vscode user works fine for a --user install, and we
+    // invoke pre-commit by absolute path so it works regardless of whether
+    // ~/.local/bin is on the postCreate shell PATH.
+    "postCreateCommand": "sudo chown vscode:vscode /home/vscode/.claude && python3 -m pip install --user --break-system-packages pre-commit && /home/vscode/.local/bin/pre-commit install",
+    // Ensure ~/.local/bin (where pip --user puts pre-commit) is on PATH for
+    // any subsequent terminal sessions the user opens inside this container.
+    "remoteEnv": {
+        "PATH": "/home/vscode/.local/bin:${containerEnv:PATH}"
+    },
     "customizations": {
         "vscode": {
             "extensions": [
-                "ms-python.python",
-                "ms-python.mypy-type-checker",
-                "charliermarsh.ruff",
-                "qwtel.sqlite-viewer",
+                "ms-azuretools.vscode-docker",
+                "ms-azuretools.vscode-containers",
                 "GitHub.copilot",
                 "GitHub.copilot-chat",
+                "Anthropic.claude-code",
+                "ms-python.python",
+                "charliermarsh.ruff",
                 "tamasfe.even-better-toml",
-                "ms-python.debugpy",
-                "github.vscode-github-actions",
-                "MichaelErmer.vsex-chromadb-viewer",
+                "redhat.vscode-yaml",
                 "bierner.markdown-preview-github-styles",
                 "bierner.github-markdown-preview",
-                "Anthropic.claude-code"
-            ],
-            "settings": {
-                "python.defaultInterpreterPath": "${workspaceFolder}/services/app/.venv/bin/python",
-                "python.testing.cwd": "${workspaceFolder}/services/app",
-                "[python]": {
-                    "editor.defaultFormatter": "charliermarsh.ruff",
-                    "editor.formatOnSave": true
-                }
-            }
+                "biomejs.biome",
+                "ckolkman.vscode-postgres"
+            ]
         }
     }
 }

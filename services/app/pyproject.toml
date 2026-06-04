@@ -15,21 +15,35 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "chromadb>=1.5",
-    "sentence-transformers>=5.0",
-    "mcp>=1.27",
-    "sqlite-utils>=3.38",
-    "pydantic>=2.12",
-    "pydantic-settings>=2.13",
-    "numpy>=2.4",
-    "networkx>=3.4",
+    # Web stack
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "jinja2>=3.1",
     "python-multipart>=0.0.12",
+    "pydantic>=2.12",
+    "pydantic-settings>=2.13",
+    # Database
+    "psycopg[binary,pool]>=3.2",
+    "alembic>=1.13",
+    # Embeddings (CPU-only torch via [tool.uv.sources] below — saves ~3 GB)
+    "sentence-transformers>=5.0",
+    "numpy>=2.4",
 ]
 
+# Optional extras. Install any combination with
+# `uv sync --extra vector --extra notebook` etc.
 [project.optional-dependencies]
+# Vector store + graph helpers. Not imported by current code but kept on the
+# menu for when retrieval grows past BM25.
+vector = [
+    "chromadb>=1.5",
+    "networkx>=3.4",
+]
+# Host-side dev tools — ipykernel for VS Code's notebook editor. Skipping
+# in the container shaves ~100 MB.
+notebook = [
+    "ipykernel>=6.29",
+]
 experimental = [
     # Symbolic math for deterministic/algebraic reasoning
     "sympy>=1.13",
@@ -66,9 +80,21 @@ dev = [
     "ruff>=0.15",
     "mypy>=1.20",
     "pre-commit>=4.0",
-    # VS Code notebook support for iterative research
-    "ipykernel>=6.29",
 ]
+
+# Force CPU-only torch wheels. Without this, uv pulls torch's default Linux
+# wheel which depends on nvidia-* CUDA packages totaling 2-3 GB. The app
+# container only runs embeddings on CPU (LLM inference lives in the Ollama
+# service); GPU support belongs in the embedder service when we extract it.
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [project.urls]
 Homepage = "https://github.com/et-do/dequorum"
@@ -98,6 +124,9 @@ select = ["E", "F", "I", "N", "UP", "RUF"]
 "src/dequorum/knowledge/store.py" = ["E501"]
 "src/dequorum/identity/seeds.py" = ["E501"]
 "src/dequorum/cli.py" = ["E501"]
+# Alembic migrations contain raw DDL strings whose readability suffers
+# from line wrapping.
+"src/dequorum/db/migrations/versions/*.py" = ["E501"]
 # Test fixtures with intentionally long claim texts (must clear the 50-char min
 # and read like real submissions).
 "tests/intake/test_submission.py" = ["E501"]

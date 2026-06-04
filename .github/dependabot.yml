@@ -1,0 +1,44 @@
+version: 2
+
+updates:
+  # --- Backend (Python + uv) ---
+  - package-ecosystem: "uv"
+    directory: "/services/app"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      python-minor:
+        update-types: ["minor", "patch"]
+
+  # --- Frontend (npm) ---
+  - package-ecosystem: "npm"
+    directory: "/services/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor:
+        update-types: ["minor", "patch"]
+
+  # --- Dockerfiles (base image bumps) ---
+  - package-ecosystem: "docker"
+    directories:
+      - "/services/app"
+      - "/services/frontend"
+      - "/services/db"
+      - "/services/ollama"
+      - "/services/proxy"
+      - "/services/auth"
+      - "/.devcontainer"
+    schedule:
+      interval: "weekly"
+
+  # --- GitHub Actions versions ---
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions-minor:
+        update-types: ["minor", "patch"]

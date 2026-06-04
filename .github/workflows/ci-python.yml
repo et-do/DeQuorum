@@ -1,0 +1,46 @@
+name: ci-python
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/app/**"
+      - ".github/workflows/ci-python.yml"
+  pull_request:
+    paths:
+      - "services/app/**"
+      - ".github/workflows/ci-python.yml"
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.13"]
+    defaults:
+      run:
+        working-directory: services/app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "services/app/uv.lock"
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --frozen --all-extras --dev
+
+      - name: Ruff (lint)
+        run: uv run ruff check src tests
+
+      - name: Ruff (format check)
+        run: uv run ruff format --check src tests
+
+      - name: Pytest
+        run: uv run pytest -q

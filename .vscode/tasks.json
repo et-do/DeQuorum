@@ -1,0 +1,31 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "compose: up (start/restart, rebuild if Dockerfile changed)",
+            "type": "shell",
+            "command": "docker compose up -d --build",
+            "options": { "cwd": "${workspaceFolder}" },
+            "presentation": {
+                "panel": "dedicated",
+                "reveal": "always",
+                "clear": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "compose: logs (follow all services)",
+            "type": "shell",
+            "command": "docker compose logs -f --tail=200",
+            "options": { "cwd": "${workspaceFolder}" },
+            "presentation": {
+                "panel": "dedicated",
+                "reveal": "always",
+                "focus": true,
+                "echo": true,
+                "clear": false
+            },
+            "problemMatcher": []
+        }
+    ]
+}

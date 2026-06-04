@@ -3,7 +3,7 @@
 # Mirrors the production architecture:
 #   - Cloud Run    <-> app, ollama
 #   - Cloud SQL    <-> db
-#   - Firebase     <-> auth-emulator, frontend (Hosting)
+#   - Firebase     <-> auth, frontend (Hosting)
 #
 # Bring up the whole stack:
 #     docker compose up
@@ -72,7 +72,7 @@ services:
       # Inference target.
       DEQUORUM_OLLAMA_HOST: "http://ollama:11434"
       # Auth emulator (the prod Firebase config takes over when this is unset).
-      FIREBASE_AUTH_EMULATOR_HOST: "auth-emulator:9099"
+      FIREBASE_AUTH_EMULATOR_HOST: "auth:9099"
       FIREBASE_PROJECT_ID: "dequorum-local"
     ports:
       - "8000:8000"
@@ -109,10 +109,10 @@ services:
     ports:
       - "80:80"
 
-  # --- Firebase Auth emulator (local-only) ------------------------------
-  auth-emulator:
+  # --- Firebase Auth (emulator locally, real Firebase in prod) ----------
+  auth:
     build:
-      context: ./services/auth-emulator
+      context: ./services/auth
     ports:
       - "9099:9099"
       - "4000:4000"

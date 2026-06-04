@@ -1,17 +1,86 @@
+# DeQuorum pre-commit configuration.
+#
+# Goal: catch real problems on every commit in <5 seconds total, with no
+# auth tokens or SaaS dependencies. See docs/architecture/ for the full
+# rationale + which hooks were considered and rejected.
+
 repos:
+  # --- Python: ruff (lint + format) ---
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.0
+    rev: v0.15.15
     hooks:
       - id: ruff
         args: [--fix]
+        files: ^services/app/.*\.py$
       - id: ruff-format
+        files: ^services/app/.*\.py$
+
+  # --- TypeScript / React: Biome (replaces prettier + eslint) ---
+  - repo: https://github.com/biomejs/pre-commit
+    rev: v2.4.16
+    hooks:
+      - id: biome-check
+        files: ^services/frontend/.*\.(js|jsx|ts|tsx|json|css)$
+
+  # --- Dockerfile lint ---
+  - repo: https://github.com/AleksaC/hadolint-pre-commit-hook
+    rev: be866b09602e241f76a5ecd52d6a3acaf3fa5e2f
+    hooks:
+      - id: hadolint
+        files: (Dockerfile|\.dockerfile)$
+
+  # --- Shell script lint ---
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: v0.11.0
+    hooks:
+      - id: shellcheck
+
+  # --- YAML lint (compose.yml + GH actions + future k8s) ---
+  # Config lives in .yamllint at the repo root.
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+
+  # --- Spell check (Rust binary, ~50ms) ---
+  # Pinned to an exact version because `v1` is a moving major-version tag
+  # and pre-commit warns against tracking moving refs (it never re-fetches
+  # them after first install). Bump with `pre-commit autoupdate` then verify
+  # the resulting rev is a concrete tag like `v1.x.y`, not just `v1`.
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.30.0
+    hooks:
+      - id: typos
+
+  # --- Secret detection (Rust binary, <1s on staged diff) ---
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  # --- pyproject.toml schema validation ---
+  - repo: https://github.com/abravalheri/validate-pyproject
+    rev: v0.25
+    hooks:
+      - id: validate-pyproject
+        files: ^services/.*/pyproject\.toml$
+
+  # --- Standard pre-commit-hooks (trailing whitespace, EOF, etc.) ---
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
       - id: check-toml
+      - id: check-json
+        # devcontainer.json uses JSONC (comments allowed by VS Code's parser
+        # but not by Python's stdlib json). VS Code's JSONC validator runs
+        # in the editor; skipping here avoids a false-positive at commit time.
+        exclude: ^\.devcontainer/devcontainer\.json$
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=1000]
+      - id: check-case-conflict
+      - id: check-symlinks
+      - id: detect-private-key

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -10,6 +13,15 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from dequorum.core.errors import CompositionError
+from dequorum.db import (
+    DEFAULT_DATABASE_URL,
+    close_pool,
+    init_pool,
+    open_category_store,
+    open_contribution_store,
+    open_identity_store,
+)
+from dequorum.db.migrate import upgrade_to_head
 from dequorum.experts import ExpertRegistry
 from dequorum.experts.seeds import build_seed_registry
 from dequorum.identity.agreement import current_agreement
@@ -20,7 +32,6 @@ from dequorum.identity.seeds import (
 from dequorum.identity.seeds import (
     seed_contributor_for,
 )
-from dequorum.identity.store import IdentityStore
 from dequorum.inference.base_model import BaseModel, MockBaseModel, OllamaBaseModel
 from dequorum.inference.composition import make_strategy
 from dequorum.inference.pipeline import Pipeline
@@ -30,7 +41,6 @@ from dequorum.knowledge.store import (
     STATUS_APPROVED,
     STATUS_PENDING,
     STATUS_REJECTED,
-    ContributionStore,
 )
 from dequorum.retrieval import Retriever
 from dequorum.review.service import (
@@ -46,16 +56,21 @@ from dequorum.taxonomy.seeds import (
 from dequorum.taxonomy.seeds import (
     populate as populate_seed_categories,
 )
-from dequorum.taxonomy.store import CategoryStore
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
 
 @dataclass
 class AppConfig:
-    db_path: str = "./.dequorum.db"
-    identity_db_path: str = "./.dequorum-identity.db"
-    category_db_path: str = "./.dequorum-categories.db"
+    # Default to the env var so `uvicorn dequorum.web.app:create_app --factory`
+    # (i.e., when configure_app() isn't called first) still picks up the
+    # compose-set DEQUORUM_DATABASE_URL. Falls back to the localhost default
+    # for plain `dequorum serve` outside compose.
+    database_url: str = field(
+        default_factory=lambda: os.environ.get(
+            "DEQUORUM_DATABASE_URL", DEFAULT_DATABASE_URL
+        )
+    )
     use_mock: bool = False
     # Empty string = look up DEFAULT_BASE_MODEL_ID from inference/models.py
     # at request time so changing the registry default takes effect without
@@ -75,7 +90,7 @@ _config = AppConfig()
 
 def configure_app(
     *,
-    db_path: str | None = None,
+    database_url: str | None = None,
     use_mock: bool | None = None,
     ollama_model: str | None = None,
     ollama_host: str | None = None,
@@ -86,8 +101,8 @@ def configure_app(
     composition: str | None = None,
 ) -> AppConfig:
     """Mutate the module-level config before create_app(). CLI calls this first."""
-    if db_path is not None:
-        _config.db_path = db_path
+    if database_url is not None:
+        _config.database_url = database_url
     if use_mock is not None:
         _config.use_mock = use_mock
     if ollama_model is not None:
@@ -119,41 +134,44 @@ def _build_router(registry: ExpertRegistry) -> EmbeddingRouter | KeywordRouter:
     return KeywordRouter(registry, min_score=threshold)
 
 
-def _open_store() -> ContributionStore:
-    path = _config.db_path
-    is_new = path == ":memory:" or not Path(path).exists()
-    store = ContributionStore(path)
-    if is_new and len(store) == 0:
-        populate_seed_contributions(store)
-    return store
-
-
-def _open_identity_store() -> IdentityStore:
-    path = _config.identity_db_path
-    is_new = path == ":memory:" or not Path(path).exists()
-    store = IdentityStore(path)
-    if is_new and len(store) == 0:
-        populate_seed_contributors(store)
-    return store
-
-
-def _open_category_store() -> CategoryStore:
-    path = _config.category_db_path
-    is_new = path == ":memory:" or not Path(path).exists()
-    store = CategoryStore(path)
-    if is_new and len(store) == 0:
-        populate_seed_categories(store)
-    return store
-
-
 def _model() -> BaseModel:
     if _config.use_mock:
         return MockBaseModel()
     return OllamaBaseModel(model=_config.ollama_model, host=_config.ollama_host)
 
 
+def _seed_if_empty() -> None:
+    """One-time seeding: agreements + contributors + contributions + categories.
+
+    Each store's `populate*` helper is idempotent: it inserts rows that aren't
+    already present. Safe to run every startup; the work is a few SELECT COUNTs
+    on a populated DB.
+    """
+    with open_identity_store() as istore:
+        istore.ensure_seed_agreements()
+        if len(istore) == 0:
+            populate_seed_contributors(istore)
+    with open_contribution_store() as cstore:
+        if len(cstore) == 0:
+            populate_seed_contributions(cstore)
+    with open_category_store() as cat_store:
+        if len(cat_store) == 0:
+            populate_seed_categories(cat_store)
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    init_pool(_config.database_url)
+    upgrade_to_head(_config.database_url)
+    _seed_if_empty()
+    try:
+        yield
+    finally:
+        close_pool()
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="dequorum")
+    app = FastAPI(title="dequorum", lifespan=_lifespan)
     templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
     templates.env.globals["STATUS_APPROVED"] = STATUS_APPROVED
     templates.env.globals["STATUS_PENDING"] = STATUS_PENDING
@@ -169,7 +187,7 @@ def create_app() -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request) -> HTMLResponse:
-        with _open_store() as store:
+        with open_contribution_store() as store:
             counts = {
                 "pending": len(store.list_by_status(STATUS_PENDING)),
                 "approved": len(store.list_by_status(STATUS_APPROVED)),
@@ -181,7 +199,7 @@ def create_app() -> FastAPI:
             {
                 "experts": registry.all(),
                 "counts": counts,
-                "db_path": _config.db_path,
+                "database_url": _config.database_url,
                 "use_mock": _config.use_mock,
             },
         )
@@ -200,7 +218,7 @@ def create_app() -> FastAPI:
         expert: str | None = None,
         status: str | None = None,
     ) -> HTMLResponse:
-        with _open_store() as store:
+        with open_contribution_store() as store:
             if expert:
                 contribs = store.list_for_expert(expert, status=status)
             elif status:
@@ -228,7 +246,7 @@ def create_app() -> FastAPI:
 
     @app.get("/contributions/{contribution_id}", response_class=HTMLResponse)
     def contribution_detail(request: Request, contribution_id: str) -> HTMLResponse:
-        with _open_store() as store:
+        with open_contribution_store() as store:
             c = store.get(contribution_id)
             if c is None:
                 raise HTTPException(status_code=404, detail="contribution not found")
@@ -249,7 +267,7 @@ def create_app() -> FastAPI:
 
     @app.get("/review", response_class=HTMLResponse)
     def review_queue(request: Request) -> HTMLResponse:
-        with _open_store() as store:
+        with open_contribution_store() as store:
             contribs = store.list_by_status(STATUS_PENDING)
             rows = [
                 {
@@ -277,7 +295,7 @@ def create_app() -> FastAPI:
         # Translate expert_id (form input) -> contributor_id + its signing key so
         # the self-vote check works against the new contributor identity model.
         voter_contributor, voter_key = seed_contributor_for(voter_id)
-        with _open_store() as store:
+        with open_contribution_store() as store:
             service = ReviewService(store, registry=registry)
             try:
                 service.cast_vote(
@@ -310,7 +328,7 @@ def create_app() -> FastAPI:
         )
         contributor, key = seed_contributor_for(expert.expert_id)
         embedder = SentenceTransformerEmbedder()
-        with _open_store() as store, _open_category_store() as cat_store:
+        with open_contribution_store() as store, open_category_store() as cat_store:
             pipeline = SubmissionPipeline(
                 contribution_store=store,
                 category_store=cat_store,
@@ -369,7 +387,7 @@ def create_app() -> FastAPI:
             tier=Tier.EMAIL_VERIFIED if email_hash else Tier.ANONYMOUS,
             email_hash=email_hash,
         )
-        with _open_identity_store() as store:
+        with open_identity_store() as store:
             store.add(contributor)
         return RedirectResponse(
             url=f"/contributors/{contributor.contributor_id}",
@@ -378,11 +396,11 @@ def create_app() -> FastAPI:
 
     @app.get("/contributors/{contributor_id}", response_class=HTMLResponse)
     def contributor_detail(request: Request, contributor_id: str) -> HTMLResponse:
-        with _open_identity_store() as store:
+        with open_identity_store() as store:
             contributor = store.get(contributor_id)
             if contributor is None:
                 raise HTTPException(status_code=404, detail="contributor not found")
-        with _open_store() as cstore:
+        with open_contribution_store() as cstore:
             their_contributions = cstore.list_by_contributor(contributor_id)
         return templates.TemplateResponse(
             request,
@@ -395,7 +413,7 @@ def create_app() -> FastAPI:
 
     @app.get("/categories", response_class=HTMLResponse)
     def categories_page(request: Request) -> HTMLResponse:
-        with _open_category_store() as store:
+        with open_category_store() as store:
             categories = store.all()
         return templates.TemplateResponse(
             request,
@@ -405,7 +423,7 @@ def create_app() -> FastAPI:
 
     @app.get("/lineages/{lineage_id}", response_class=HTMLResponse)
     def lineage_detail(request: Request, lineage_id: str) -> HTMLResponse:
-        with _open_store() as store:
+        with open_contribution_store() as store:
             versions = store.list_for_lineage(lineage_id)
             if not versions:
                 raise HTTPException(status_code=404, detail="lineage not found")
@@ -438,8 +456,7 @@ def create_app() -> FastAPI:
 
     @app.post("/query", response_class=HTMLResponse)
     def query_submit(request: Request, text: str = Form(...)) -> HTMLResponse:
-        store = _open_store()
-        try:
+        with open_contribution_store() as store:
             pipeline = Pipeline(
                 router=_build_router(registry),
                 model=_model(),
@@ -454,8 +471,6 @@ def create_app() -> FastAPI:
             except CompositionError as exc:
                 response = None
                 error = str(exc)
-        finally:
-            store.close()
         return templates.TemplateResponse(
             request,
             "query.html",

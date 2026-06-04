@@ -13,7 +13,7 @@ OLLAMA_PID=$!
 
 # Wait for the server to accept connections.
 echo "[entrypoint] waiting for ollama to be ready..."
-for i in $(seq 1 30); do
+for _ in $(seq 1 30); do
     if ollama list > /dev/null 2>&1; then
         echo "[entrypoint] ollama is ready"
         break

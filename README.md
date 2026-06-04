@@ -14,7 +14,7 @@ The repo is organized as a **multi-service compose stack**. Each service has its
 | `services/db` (Postgres 16) | Google Cloud SQL |
 | `services/ollama` (LLM inference) | Cloud Run with GPU or dedicated VM |
 | `services/frontend` (Vite + React) | Firebase Hosting |
-| `services/auth-emulator` (Firebase Auth) | Firebase Auth |
+| `services/auth` (Firebase Auth Emulator) | Firebase Auth |
 | `services/proxy` (Caddy) | Not needed in prod — Firebase + Cloud Run handle routing & TLS |
 
 ```
@@ -29,7 +29,7 @@ ai-playground/
 │   ├── ollama/          # Local LLM inference
 │   ├── frontend/        # Vite + React + Tailwind SPA stub
 │   ├── proxy/           # Caddy reverse proxy (local-only)
-│   └── auth-emulator/   # Firebase Auth emulator (local-only)
+│   └── auth/            # Firebase Auth (emulator locally, real Firebase in prod)
 ├── compose.yml          # local orchestration
 ├── docs/
 │   ├── PRODUCT.md           # product spec — what, who, scope, pricing, compute economics

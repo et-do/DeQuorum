@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
 
 from dequorum.core.errors import CompositionError
+from dequorum.db import (
+    DEFAULT_DATABASE_URL,
+    init_pool,
+    open_category_store,
+    open_contribution_store,
+    open_identity_store,
+)
+from dequorum.db.migrate import upgrade_to_head
 from dequorum.experts import ExpertRegistry
 from dequorum.experts.seeds import build_seed_registry
 from dequorum.identity.agreement import current_agreement
@@ -41,11 +50,44 @@ from dequorum.taxonomy.seeds import (
 from dequorum.taxonomy.seeds import (
     populate as populate_seed_categories,
 )
-from dequorum.taxonomy.store import CategoryStore
 
-DEFAULT_DB = "./.dequorum.db"
-DEFAULT_IDENTITY_DB = "./.dequorum-identity.db"
-DEFAULT_CATEGORY_DB = "./.dequorum-categories.db"
+
+def _resolve_database_url(arg: str | None) -> str:
+    """Resolve database URL from CLI arg, env var, or built-in default."""
+    return arg or os.environ.get("DEQUORUM_DATABASE_URL") or DEFAULT_DATABASE_URL
+
+
+def _bootstrap(args: argparse.Namespace) -> str:
+    """Set up pool + run migrations. Called by every subcommand. Returns URL."""
+    url = _resolve_database_url(getattr(args, "database_url", None))
+    init_pool(url)
+    upgrade_to_head(url)
+    return url
+
+
+def _ensure_seeded() -> None:
+    """Seed each store if empty. Run once after `_bootstrap`."""
+    with open_identity_store() as istore:
+        istore.ensure_seed_agreements()
+        if len(istore) == 0:
+            populate_seed_contributors(istore)
+    with open_contribution_store() as cstore:
+        if len(cstore) == 0:
+            populate_seed_contributions(cstore)
+    with open_category_store() as cat_store:
+        if len(cat_store) == 0:
+            populate_seed_categories(cat_store)
+
+
+def _add_database_url_arg(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--database-url",
+        default=None,
+        help=(
+            "Postgres URL. Defaults to $DEQUORUM_DATABASE_URL, then "
+            f"{DEFAULT_DATABASE_URL!r}."
+        ),
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -89,7 +131,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default="pick_best",
         help="How to combine N expert answers into the final response",
     )
-    query.add_argument("--db", default=DEFAULT_DB, help="Contribution DB path")
+    _add_database_url_arg(query)
 
     submit = sub.add_parser(
         "submit", help="Submit a signed contribution (pending review)"
@@ -118,8 +160,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Hard-fail submission if a likely duplicate exists "
         "(default: surface and let you decide)",
     )
-    submit.add_argument("--db", default=DEFAULT_DB)
-    submit.add_argument("--category-db", default=DEFAULT_CATEGORY_DB)
+    _add_database_url_arg(submit)
 
     update = sub.add_parser(
         "update", help="Submit a new version of an existing approved contribution"
@@ -144,8 +185,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional new primary category (defaults to the existing one)",
     )
-    update.add_argument("--db", default=DEFAULT_DB)
-    update.add_argument("--category-db", default=DEFAULT_CATEGORY_DB)
+    _add_database_url_arg(update)
 
     signup = sub.add_parser(
         "signup", help="Create a new contributor account (signs the user agreement)"
@@ -159,19 +199,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="(dev only) Deterministic seed phrase for the keypair; default is random.",
     )
-    signup.add_argument("--identity-db", default=DEFAULT_IDENTITY_DB)
+    _add_database_url_arg(signup)
 
     list_cat = sub.add_parser("categories", help="List the curated category taxonomy")
-    list_cat.add_argument(
-        "--category-db",
-        default=DEFAULT_CATEGORY_DB,
-        help="Category DB path",
-    )
+    _add_database_url_arg(list_cat)
 
     list_contrib = sub.add_parser(
         "list-contributors", help="List signed-up contributors"
     )
-    list_contrib.add_argument("--identity-db", default=DEFAULT_IDENTITY_DB)
+    _add_database_url_arg(list_contrib)
 
     vote = sub.add_parser("vote", help="Cast a signed vote on a contribution")
     vote.add_argument("--as", dest="voter_id", required=True, help="Voter expert id")
@@ -181,7 +217,7 @@ def _build_parser() -> argparse.ArgumentParser:
     vote.add_argument(
         "--score", type=int, required=True, choices=[-1, 0, 1], help="-1, 0, or 1"
     )
-    vote.add_argument("--db", default=DEFAULT_DB)
+    _add_database_url_arg(vote)
 
     list_c = sub.add_parser(
         "list-contributions", help="List stored contributions with status + tally"
@@ -193,17 +229,17 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Filter by status",
     )
-    list_c.add_argument("--db", default=DEFAULT_DB)
+    _add_database_url_arg(list_c)
 
     review = sub.add_parser("review", help="Show pending contributions awaiting votes")
-    review.add_argument("--db", default=DEFAULT_DB)
+    _add_database_url_arg(review)
 
     sub.add_parser("list-experts", help="Print the seed expert registry")
 
     serve = sub.add_parser("serve", help="Run the FastAPI web UI")
     serve.add_argument("--host", default="0.0.0.0", help="Bind host")
     serve.add_argument("--port", type=int, default=8000, help="Bind port")
-    serve.add_argument("--db", default=DEFAULT_DB)
+    _add_database_url_arg(serve)
     serve.add_argument("--mock", action="store_true", help="Use mock model")
     serve.add_argument(
         "--router", choices=("keyword", "embedding"), default="embedding"
@@ -233,7 +269,7 @@ def _build_parser() -> argparse.ArgumentParser:
     bench.add_argument("--min-score", type=float, default=None)
     bench.add_argument("--top-k", type=int, default=2)
     bench.add_argument("--retrieve-top-k", type=int, default=3)
-    bench.add_argument("--db", default=DEFAULT_DB)
+    _add_database_url_arg(bench)
     bench.add_argument(
         "--output",
         default="docs/benchmarks/report.md",
@@ -246,34 +282,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Run only the first N questions (smoke testing)",
     )
 
+    db = sub.add_parser("db", help="Database management commands")
+    db_sub = db.add_subparsers(dest="db_cmd", required=True)
+    db_upgrade = db_sub.add_parser("upgrade", help="Run Alembic migrations to head")
+    _add_database_url_arg(db_upgrade)
+    db_seed = db_sub.add_parser("seed", help="Seed all stores from module-level data")
+    _add_database_url_arg(db_seed)
+
     return parser
-
-
-def _open_store(path: str) -> ContributionStore:
-    """Open the store at path and seed it on first use if empty."""
-    is_new = path == ":memory:" or not Path(path).exists()
-    store = ContributionStore(path)
-    if is_new and len(store) == 0:
-        populate_seed_contributions(store)
-    return store
-
-
-def _open_identity_store(path: str) -> IdentityStore:
-    """Open the identity store at path and seed it on first use if empty."""
-    is_new = path == ":memory:" or not Path(path).exists()
-    store = IdentityStore(path)
-    if is_new and len(store) == 0:
-        populate_seed_contributors(store)
-    return store
-
-
-def _open_category_store(path: str) -> CategoryStore:
-    """Open the category store at path and seed it on first use if empty."""
-    is_new = path == ":memory:" or not Path(path).exists()
-    store = CategoryStore(path)
-    if is_new and len(store) == 0:
-        populate_seed_categories(store)
-    return store
 
 
 def _resolve_contribution_id(store: ContributionStore, prefix: str) -> str | None:
@@ -305,6 +321,8 @@ def _build_router(
 
 
 def _cmd_query(args: argparse.Namespace) -> int:
+    _bootstrap(args)
+    _ensure_seeded()
     registry = build_seed_registry()
     router = _build_router(registry, args.router, args.min_score)
     model: MockBaseModel | OllamaBaseModel = (
@@ -313,29 +331,35 @@ def _cmd_query(args: argparse.Namespace) -> int:
         else OllamaBaseModel(model=args.model or "", host=args.host)
     )
 
-    retriever: Retriever | None = None
-    store: ContributionStore | None = None
-    if not args.no_retrieve:
-        store = _open_store(args.db)
-        retriever = Retriever(store)
-
-    pipeline = Pipeline(
-        router=router,
-        model=model,
-        retriever=retriever,
-        composition=make_strategy(args.compose),
-        top_k=args.top_k,
-        retrieve_top_k=args.retrieve_top_k,
-    )
-
-    try:
-        response = pipeline.query(args.text)
-    except CompositionError as exc:
-        print(json.dumps({"error": str(exc)}, indent=2))
-        return 1
-    finally:
-        if store is not None:
-            store.close()
+    if args.no_retrieve:
+        pipeline = Pipeline(
+            router=router,
+            model=model,
+            retriever=None,
+            composition=make_strategy(args.compose),
+            top_k=args.top_k,
+            retrieve_top_k=args.retrieve_top_k,
+        )
+        try:
+            response = pipeline.query(args.text)
+        except CompositionError as exc:
+            print(json.dumps({"error": str(exc)}, indent=2))
+            return 1
+    else:
+        with open_contribution_store() as store:
+            pipeline = Pipeline(
+                router=router,
+                model=model,
+                retriever=Retriever(store),
+                composition=make_strategy(args.compose),
+                top_k=args.top_k,
+                retrieve_top_k=args.retrieve_top_k,
+            )
+            try:
+                response = pipeline.query(args.text)
+            except CompositionError as exc:
+                print(json.dumps({"error": str(exc)}, indent=2))
+                return 1
 
     payload = {
         "query": response.query,
@@ -380,6 +404,8 @@ def _cmd_query(args: argparse.Namespace) -> int:
 
 
 def _cmd_submit(args: argparse.Namespace) -> int:
+    url = _bootstrap(args)
+    _ensure_seeded()
     registry = build_seed_registry()
     try:
         expert = registry.get(args.expert_id)
@@ -394,8 +420,8 @@ def _cmd_submit(args: argparse.Namespace) -> int:
 
     embedder = SentenceTransformerEmbedder()
     with (
-        _open_store(args.db) as store,
-        _open_category_store(args.category_db) as cat_store,
+        open_contribution_store() as store,
+        open_category_store() as cat_store,
     ):
         pipeline = SubmissionPipeline(
             contribution_store=store,
@@ -443,7 +469,7 @@ def _cmd_submit(args: argparse.Namespace) -> int:
                 },
                 "signature": asdict(contribution.signature),
                 "store_total": total,
-                "db": args.db,
+                "database_url": url,
             },
             indent=2,
         )
@@ -452,6 +478,8 @@ def _cmd_submit(args: argparse.Namespace) -> int:
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
+    url = _bootstrap(args)
+    _ensure_seeded()
     registry = build_seed_registry()
     try:
         expert = registry.get(args.expert_id)
@@ -462,8 +490,8 @@ def _cmd_update(args: argparse.Namespace) -> int:
     contributor, contributor_key = seed_contributor_for(expert.expert_id)
 
     with (
-        _open_store(args.db) as store,
-        _open_category_store(args.category_db) as cat_store,
+        open_contribution_store() as store,
+        open_category_store() as cat_store,
     ):
         current_contribution = store.current_for_lineage(args.lineage)
         if current_contribution is None:
@@ -507,7 +535,7 @@ def _cmd_update(args: argparse.Namespace) -> int:
                 "expert_id": contribution.expert_id,
                 "contributor_id": contribution.contributor_id,
                 "status": STATUS_PENDING,
-                "db": args.db,
+                "database_url": url,
             },
             indent=2,
         )
@@ -516,6 +544,8 @@ def _cmd_update(args: argparse.Namespace) -> int:
 
 
 def _cmd_signup(args: argparse.Namespace) -> int:
+    _bootstrap(args)
+    _ensure_seeded()
     import hashlib
     import secrets
 
@@ -543,7 +573,7 @@ def _cmd_signup(args: argparse.Namespace) -> int:
         email_hash=email_hash,
     )
 
-    with _open_identity_store(args.identity_db) as store:
+    with open_identity_store() as store:
         store.add(contributor)
         total = len(store)
 
@@ -573,7 +603,9 @@ def _cmd_signup(args: argparse.Namespace) -> int:
 
 
 def _cmd_list_categories(args: argparse.Namespace) -> int:
-    with _open_category_store(args.category_db) as store:
+    _bootstrap(args)
+    _ensure_seeded()
+    with open_category_store() as store:
         payload = [
             {
                 "category_id": c.category_id,
@@ -589,7 +621,9 @@ def _cmd_list_categories(args: argparse.Namespace) -> int:
 
 
 def _cmd_list_contributors(args: argparse.Namespace) -> int:
-    with _open_identity_store(args.identity_db) as store:
+    _bootstrap(args)
+    _ensure_seeded()
+    with open_identity_store() as store:
         payload = [
             {
                 "contributor_id": c.contributor_id,
@@ -607,6 +641,8 @@ def _cmd_list_contributors(args: argparse.Namespace) -> int:
 
 
 def _cmd_vote(args: argparse.Namespace) -> int:
+    _bootstrap(args)
+    _ensure_seeded()
     registry = build_seed_registry()
     if args.voter_id not in registry:
         print(
@@ -614,7 +650,7 @@ def _cmd_vote(args: argparse.Namespace) -> int:
         )
         return 1
 
-    with _open_store(args.db) as store:
+    with open_contribution_store() as store:
         try:
             cid = _resolve_contribution_id(store, args.contribution)
         except CompositionError as exc:
@@ -643,7 +679,9 @@ def _cmd_vote(args: argparse.Namespace) -> int:
 
 
 def _cmd_list_contributions(args: argparse.Namespace) -> int:
-    with _open_store(args.db) as store:
+    _bootstrap(args)
+    _ensure_seeded()
+    with open_contribution_store() as store:
         if args.expert:
             contribs = store.list_for_expert(args.expert, status=args.status)
         elif args.status:
@@ -667,7 +705,9 @@ def _cmd_list_contributions(args: argparse.Namespace) -> int:
 
 
 def _cmd_review(args: argparse.Namespace) -> int:
-    with _open_store(args.db) as store:
+    _bootstrap(args)
+    _ensure_seeded()
+    with open_contribution_store() as store:
         contribs = store.list_by_status(STATUS_PENDING)
         payload = [
             {
@@ -708,8 +748,9 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
     from dequorum.web.app import configure_app, create_app
 
+    url = _resolve_database_url(args.database_url)
     configure_app(
-        db_path=args.db,
+        database_url=url,
         use_mock=args.mock,
         router=args.router,
         min_score=args.min_score,
@@ -721,11 +762,13 @@ def _cmd_serve(args: argparse.Namespace) -> int:
 
 
 def _cmd_benchmark(args: argparse.Namespace) -> int:
+    _bootstrap(args)
+    _ensure_seeded()
+
     from dequorum.benchmark import SEED_QUESTIONS, run_benchmark
     from dequorum.benchmark.runner import write_markdown_report
 
     registry = build_seed_registry()
-    store = _open_store(args.db)
 
     def router_factory(reg: ExpertRegistry) -> object:
         return _build_router(reg, args.router, args.min_score)
@@ -749,7 +792,7 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
 
     total = len(questions) * 3
     print(f"Running {len(questions)} questions x 3 conditions = {total} generations...")
-    try:
+    with open_contribution_store() as store:
         report = run_benchmark(
             questions=questions,
             model=model,
@@ -761,8 +804,6 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
             model_label=model_label,
             progress=progress,
         )
-    finally:
-        store.close()
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -770,6 +811,32 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
     print(f"\nReport written: {output_path}")
     print("Open it side-by-side with the spec and rate the answers honestly.")
     return 0
+
+
+def _cmd_db(args: argparse.Namespace) -> int:
+    url = _resolve_database_url(args.database_url)
+    if args.db_cmd == "upgrade":
+        init_pool(url)
+        upgrade_to_head(url)
+        print(json.dumps({"ok": True, "database_url": url, "action": "upgrade"}))
+        return 0
+    if args.db_cmd == "seed":
+        init_pool(url)
+        upgrade_to_head(url)
+        _ensure_seeded()
+        with open_contribution_store() as cstore, open_identity_store() as istore:
+            totals = {
+                "contributions": len(cstore),
+                "contributors": len(istore),
+            }
+        print(json.dumps({"ok": True, "database_url": url, "totals": totals}))
+        return 0
+    return 2
+
+
+# Suppress an unused-import warning: IdentityStore is re-exported for tests
+# and external CLI scripts that import from dequorum.cli.
+_ = IdentityStore
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -798,6 +865,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_serve(args)
     if args.cmd == "benchmark":
         return _cmd_benchmark(args)
+    if args.cmd == "db":
+        return _cmd_db(args)
     return 2
 
 

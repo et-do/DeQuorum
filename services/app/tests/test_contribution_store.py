@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 from dequorum.knowledge.contribution import Contribution
 from dequorum.knowledge.store import ContributionStore
 
@@ -52,10 +50,12 @@ def test_iter_all() -> None:
         }
 
 
-def test_file_backed_persistence(tmp_path: Path) -> None:
-    db = tmp_path / "c.db"
+def test_persistence_across_store_instances() -> None:
+    # Two stores backed by the same Postgres database see each other's writes.
+    # (File-backed persistence on a SQLite path was the old shape; Postgres
+    # makes persistence implicit — every store sees the same DB.)
     c = _c("py", "persisted")
-    with ContributionStore(db) as s1:
+    with ContributionStore() as s1:
         s1.add(c)
-    with ContributionStore(db) as s2:
+    with ContributionStore() as s2:
         assert s2.get(c.contribution_id) == c
