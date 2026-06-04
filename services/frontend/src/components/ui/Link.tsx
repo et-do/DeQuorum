@@ -1,5 +1,5 @@
-import { type LinkProps, Link as RouterLink } from "@tanstack/react-router";
-import type { AnchorHTMLAttributes } from "react";
+import { Link as RouterLink } from "@tanstack/react-router";
+import type { AnchorHTMLAttributes, ComponentProps } from "react";
 import { cn } from "@/lib/cn";
 
 const LINK_STYLES =
@@ -8,8 +8,11 @@ const LINK_STYLES =
 /**
  * Internal navigation — preserves SPA semantics through TanStack Router.
  * Use for any path that the React app owns.
+ *
+ * Props are inferred from `RouterLink` so TanStack Router's type-safe
+ * `to` + `params` + `search` flow still applies.
  */
-export function NavLink({ className, ...props }: LinkProps) {
+export function NavLink({ className, ...props }: ComponentProps<typeof RouterLink>) {
 	return (
 		<RouterLink
 			{...props}

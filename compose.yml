@@ -103,6 +103,13 @@ services:
       - "5173:5173"
     environment:
       VITE_PROXY_API_TARGET: "http://app:8000"
+      # On WSL2 + Docker Desktop (and most bind-mount setups outside native
+      # Linux), inotify file-change events don't propagate from host into
+      # the container. Vite's watcher relies on chokidar, which honors
+      # this env var and falls back to polling. Without it HMR silently
+      # never fires — Vite logs no "page reload" lines on saves.
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "200"
     volumes:
       # Bind-mount the whole project so everything (src, config, generated
       # routeTree.gen.ts, .tanstack/ tmp dir) lives on one filesystem.

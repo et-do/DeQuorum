@@ -38,16 +38,19 @@ export const Route = createFileRoute("/app/explore/contributions/")({
 });
 
 function ContributionsList() {
-	const navigate = useNavigate({ from: "/app/explore/contributions" });
+	const navigate = useNavigate();
 	const search = Route.useSearch();
 	const [qInput, setQInput] = useState(search.q ?? "");
 
 	useEffect(() => {
 		const id = window.setTimeout(() => {
-			navigate({ search: (s) => ({ ...s, q: qInput || undefined }) });
+			navigate({
+				to: "/app/explore/contributions",
+				search: { ...search, q: qInput || undefined },
+			});
 		}, 250);
 		return () => window.clearTimeout(id);
-	}, [qInput, navigate]);
+	}, [qInput, navigate, search]);
 
 	const experts = useQuery({ queryKey: ["experts"], queryFn: listExperts });
 	const contribs = useQuery({
@@ -70,10 +73,11 @@ function ContributionsList() {
 					value={search.status ?? ""}
 					onChange={(e) =>
 						navigate({
-							search: (s) => ({
-								...s,
+							to: "/app/explore/contributions",
+							search: {
+								...search,
 								status: (e.target.value || undefined) as Status | undefined,
-							}),
+							},
 						})
 					}
 					className="border border-border bg-bg px-2 py-2 text-sm focus:border-border-strong focus:outline-none"
@@ -88,7 +92,11 @@ function ContributionsList() {
 					value={search.expert ?? ""}
 					onChange={(e) =>
 						navigate({
-							search: (s) => ({ ...s, expert: e.target.value || undefined }),
+							to: "/app/explore/contributions",
+							search: {
+								...search,
+								expert: e.target.value || undefined,
+							},
 						})
 					}
 					className="border border-border bg-bg px-2 py-2 text-sm focus:border-border-strong focus:outline-none"

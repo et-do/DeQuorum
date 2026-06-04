@@ -64,10 +64,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 	return res.json() as Promise<T>;
 }
 
-function qs(params: Record<string, string | undefined>): string {
+function qs(params: object): string {
 	const search = new URLSearchParams();
 	for (const [k, v] of Object.entries(params)) {
-		if (v !== undefined && v !== "") search.append(k, v);
+		if (v === undefined || v === null || v === "") continue;
+		search.append(k, String(v));
 	}
 	const s = search.toString();
 	return s ? `?${s}` : "";

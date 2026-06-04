@@ -69,6 +69,7 @@ export interface SubmitContributionResponse extends Contribution {
 export interface Contributor {
 	contributor_id: string;
 	display_name: string;
+	public_key_hex: string;
 	tier: number;
 	tier_name: string;
 	agreement_version: string;

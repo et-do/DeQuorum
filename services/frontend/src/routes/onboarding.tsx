@@ -52,13 +52,13 @@ function OnboardingWizard() {
 			setCreated({
 				contributor_id: res.contributor_id,
 				display_name: res.display_name,
-				public_key_hex: (res as { public_key_hex: string }).public_key_hex,
+				public_key_hex: res.public_key_hex,
 				private_key_hex: res.private_key_hex,
 			});
 			setAccount({
 				contributor_id: res.contributor_id,
 				display_name: res.display_name,
-				public_key_hex: (res as { public_key_hex: string }).public_key_hex,
+				public_key_hex: res.public_key_hex,
 			});
 			setRolesValue(selected);
 			toast("Account created", { tone: "success" });

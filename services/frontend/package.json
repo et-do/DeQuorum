@@ -5,7 +5,9 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite --host 0.0.0.0 --port 5173",
-		"build": "tsc --noEmit && vite build",
+		"routes": "tsr generate",
+		"typecheck": "tsr generate && tsc --noEmit",
+		"build": "tsr generate && tsc --noEmit && vite build",
 		"preview": "vite preview --host 0.0.0.0 --port 5173",
 		"test": "vitest",
 		"test:run": "vitest run"
@@ -21,6 +23,7 @@
 	},
 	"devDependencies": {
 		"@tailwindcss/vite": "^4.0.0",
+		"@tanstack/router-cli": "^1.85.0",
 		"@tanstack/router-plugin": "^1.85.0",
 		"@testing-library/jest-dom": "^6.6.0",
 		"@testing-library/react": "^16.1.0",

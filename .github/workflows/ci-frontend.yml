@@ -39,6 +39,13 @@ jobs:
             npm install --no-audit --no-fund
           fi
 
+      # Generate routeTree.gen.ts before tsc — the file is gitignored
+      # (auto-regenerated on every Vite start), but CI doesn't run Vite
+      # before tsc, so without an explicit `tsr generate` step every
+      # `createFileRoute("/...")` call shows up as a type error.
+      - name: Generate routes
+        run: npm run routes
+
       - name: TypeScript check
         run: npx tsc --noEmit
 

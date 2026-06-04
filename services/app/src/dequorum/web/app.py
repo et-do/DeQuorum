@@ -209,6 +209,7 @@ def _serialize_contributor(c: object) -> dict:
     return {
         "contributor_id": c.contributor_id,  # type: ignore[attr-defined]
         "display_name": c.display_name,  # type: ignore[attr-defined]
+        "public_key_hex": c.public_key.hex(),  # type: ignore[attr-defined]
         "tier": int(c.tier),  # type: ignore[attr-defined]
         "tier_name": c.tier.name,  # type: ignore[attr-defined]
         "agreement_version": c.agreement_version,  # type: ignore[attr-defined]
