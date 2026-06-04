@@ -5,7 +5,7 @@
 #   - prod: built wheel, no source tree, slim runtime (Cloud Run target)
 
 # --- shared base ---------------------------------------------------------
-FROM python:3.13-slim AS base
+FROM python:3.14-slim AS base
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -51,7 +51,7 @@ COPY src ./src
 RUN uv sync --frozen --no-dev
 
 
-FROM python:3.13-slim AS prod
+FROM python:3.14-slim AS prod
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
