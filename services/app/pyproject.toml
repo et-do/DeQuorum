@@ -19,7 +19,7 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "jinja2>=3.1",
-    "python-multipart>=0.0.12",
+    "python-multipart>=0.0.30",
     "pydantic>=2.12",
     "pydantic-settings>=2.13",
     # Database
@@ -76,8 +76,8 @@ dev = [
     "pytest-cov>=6.0",
     "pytest-xdist>=3.5",
     # Property-based testing: verify mathematical invariants of novel architectures
-    "hypothesis>=6.130",
-    "ruff>=0.15",
+    "hypothesis>=6.155.1",
+    "ruff>=0.15.15",
     "mypy>=1.20",
     "pre-commit>=4.0",
 ]
