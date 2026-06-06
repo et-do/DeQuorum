@@ -4,7 +4,7 @@
 #   - dev:  Vite dev server with HMR (used by compose dev override)
 #   - prod: static build, served by anything (Firebase Hosting target)
 
-FROM node:22-alpine AS base
+FROM node:26-alpine AS base
 
 # Not /app — that collides with the SPA's /app URL route. Vite resolves
 # URLs against the working directory, so `GET /app` would try to read the
