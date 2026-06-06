@@ -42,7 +42,7 @@ One internal smell: `app` currently does signing, voting, lineage, retrieval, ro
 | --- | --- |
 | **Distributed-inference orchestrator** | Only when contributor LoRA nodes actually exist. Then build it in Go (see [language choices](#5-language-choices)) |
 | **Webhook / federation receiver** | Only if we federate (v1.0+) |
-| **Dedicated vector DB** | Stay on pgvector until >10M vectors. It beats Pinecone/Weaviate on latency + ops simplicity at our scale and filters by `expert_id`, `approved_at`, `tenant_id` in one SQL round-trip |
+| **Dedicated vector DB** | Stay on pgvector until >10M vectors. It beats Pinecone/Weaviate on latency + ops simplicity at our scale and filters by `primary_category_id`, `approved_at`, `tenant_id` in one SQL round-trip |
 
 ## 3. Production gotchas to plan for
 

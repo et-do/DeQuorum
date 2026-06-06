@@ -85,6 +85,22 @@ class BaseModelProfile:
 
 _REGISTRY: Final[tuple[BaseModelProfile, ...]] = (
     BaseModelProfile(
+        model_id="qwen2.5-coder-3b",
+        display_name="Qwen 2.5 Coder 3B",
+        ollama_tag="qwen2.5-coder:3b",
+        huggingface_id="Qwen/Qwen2.5-Coder-3B-Instruct",
+        license=License.APACHE_2_0,
+        parameter_count_billions=3.0,
+        context_window_tokens=32_768,
+        instruct_format=InstructFormat.QWEN_CHATML,
+        domain=Domain.CODE,
+        rationale=(
+            "Half the size of Qwen Coder 7B. Tolerable on CPU (~25 tok/s) "
+            "and snappy on any consumer GPU. Use as a dev / fast-mode "
+            "fallback when the production-target model is GPU-constrained."
+        ),
+    ),
+    BaseModelProfile(
         model_id="qwen2.5-coder-7b",
         display_name="Qwen 2.5 Coder 7B",
         ollama_tag="qwen2.5-coder:7b",

@@ -15,7 +15,7 @@ export function Card({
 	className?: string;
 	as?: "div" | "section" | "article" | "aside";
 }) {
-	return <As className={cn("border border-border bg-bg p-5", className)}>{children}</As>;
+	return <As className={cn("rounded-lg border border-border bg-bg p-5", className)}>{children}</As>;
 }
 
 export function CardHeader({

@@ -9,19 +9,22 @@
  * is parsed once and surfaced via `.detail`.
  */
 
+import { withAuthHeader } from "@/lib/auth";
 import type {
 	AgreementInfo,
 	AppMeta,
 	Category,
+	ChatSession,
+	ChatSessionDetail,
+	ChatStreamEvent,
+	Comment,
 	Contribution,
 	ContributionsQuery,
 	ContributionWithVotes,
 	Contributor,
 	ContributorDetail,
-	Expert,
+	CreateCommentPayload,
 	LineageDetail,
-	NewContributorResponse,
-	QueryResponse,
 	SubmitContributionResponse,
 	VoteOutcome,
 } from "./types";
@@ -39,10 +42,12 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+	const auth = await withAuthHeader();
 	const res = await fetch(`${API_BASE}${path}`, {
 		...init,
 		headers: {
 			"Content-Type": "application/json",
+			...auth,
 			...(init.headers || {}),
 		},
 	});
@@ -79,9 +84,6 @@ export const getHealthz = () => request<{ status: "ok" }>("/healthz");
 export const getMeta = () => request<AppMeta>("/meta");
 export const getAgreement = () => request<AgreementInfo>("/agreement");
 
-// ---- experts ----
-export const listExperts = () => request<Expert[]>("/experts");
-
 // ---- contributions ----
 export const listContributions = (params: ContributionsQuery = {}) =>
 	request<Contribution[]>(`/contributions${qs(params)}`);
@@ -90,20 +92,16 @@ export const getContribution = (id: string) =>
 	request<ContributionWithVotes>(`/contributions/${encodeURIComponent(id)}`);
 
 export const submitContribution = (payload: {
-	expert_id: string;
+	primary_category_id: string;
 	text: string;
 	citations?: string[];
-	primary_category_id?: string;
 }) =>
 	request<SubmitContributionResponse>("/contributions", {
 		method: "POST",
 		body: JSON.stringify(payload),
 	});
 
-export const castVote = (
-	contributionId: string,
-	payload: { voter_id: string; score: -1 | 0 | 1 },
-) =>
+export const castVote = (contributionId: string, payload: { score: -1 | 0 | 1 }) =>
 	request<VoteOutcome>(`/contributions/${encodeURIComponent(contributionId)}/votes`, {
 		method: "POST",
 		body: JSON.stringify(payload),
@@ -121,12 +119,6 @@ export const listContributors = () => request<Contributor[]>("/contributors");
 export const getContributor = (id: string) =>
 	request<ContributorDetail>(`/contributors/${encodeURIComponent(id)}`);
 
-export const createContributor = (payload: { display_name: string; email?: string }) =>
-	request<NewContributorResponse>("/contributors", {
-		method: "POST",
-		body: JSON.stringify(payload),
-	});
-
 // ---- categories ----
 export const listCategories = () => request<Category[]>("/categories");
 
@@ -134,9 +126,108 @@ export const listCategories = () => request<Category[]>("/categories");
 export const getLineage = (id: string) =>
 	request<LineageDetail>(`/lineages/${encodeURIComponent(id)}`);
 
-// ---- queries ----
-export const runQuery = (text: string) =>
-	request<QueryResponse>("/queries", {
+// ---- comments ----
+
+export const listContributionComments = (contributionId: string) =>
+	request<Comment[]>(`/contributions/${encodeURIComponent(contributionId)}/comments`);
+
+export const createContributionComment = (contributionId: string, payload: CreateCommentPayload) =>
+	request<Comment>(`/contributions/${encodeURIComponent(contributionId)}/comments`, {
 		method: "POST",
-		body: JSON.stringify({ text }),
+		body: JSON.stringify(payload),
 	});
+
+export const redactComment = (commentId: string) =>
+	request<void>(`/comments/${encodeURIComponent(commentId)}`, {
+		method: "DELETE",
+	});
+
+// ---- chat sessions ----
+export const listChatSessions = () => request<ChatSession[]>("/chat/sessions");
+
+export const createChatSession = (title?: string) =>
+	request<ChatSession>("/chat/sessions", {
+		method: "POST",
+		body: JSON.stringify(title ? { title } : {}),
+	});
+
+export const getChatSession = (sessionId: string) =>
+	request<ChatSessionDetail>(`/chat/sessions/${encodeURIComponent(sessionId)}`);
+
+export const deleteChatSession = (sessionId: string) =>
+	request<void>(`/chat/sessions/${encodeURIComponent(sessionId)}`, {
+		method: "DELETE",
+	});
+
+export const renameChatSession = (sessionId: string, title: string) =>
+	request<ChatSession>(`/chat/sessions/${encodeURIComponent(sessionId)}`, {
+		method: "PATCH",
+		body: JSON.stringify({ title }),
+	});
+
+/**
+ * NDJSON-streamed chat completion. Each parsed line becomes one event
+ * delivered to the `onEvent` callback. Pass an `AbortSignal` to support
+ * stop-generating.
+ *
+ *   const ac = new AbortController();
+ *   streamChatMessage(sessionId, text, {
+ *     signal: ac.signal,
+ *     onEvent: (e) => { ... },
+ *   });
+ *   // later:
+ *   ac.abort();
+ */
+export async function streamChatMessage(
+	sessionId: string,
+	text: string,
+	{
+		signal,
+		onEvent,
+	}: {
+		signal: AbortSignal;
+		onEvent: (event: ChatStreamEvent) => void;
+	},
+): Promise<void> {
+	const auth = await withAuthHeader();
+	const res = await fetch(`/api/v1/chat/sessions/${encodeURIComponent(sessionId)}/stream`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json", ...auth },
+		body: JSON.stringify({ text }),
+		signal,
+	});
+	if (!res.ok) {
+		let detail: unknown = res.statusText;
+		try {
+			const body = await res.json();
+			detail = body.detail ?? body;
+		} catch {
+			// non-JSON error body
+		}
+		throw new ApiError(
+			res.status,
+			detail,
+			typeof detail === "string" ? detail : `HTTP ${res.status}`,
+		);
+	}
+	const reader = res.body?.getReader();
+	if (!reader) throw new Error("stream not readable");
+	const decoder = new TextDecoder();
+	let buffer = "";
+	while (true) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		buffer += decoder.decode(value, { stream: true });
+		const lines = buffer.split("\n");
+		buffer = lines.pop() ?? "";
+		for (const line of lines) {
+			if (!line.trim()) continue;
+			try {
+				const parsed = JSON.parse(line) as ChatStreamEvent;
+				onEvent(parsed);
+			} catch {
+				// skip malformed line
+			}
+		}
+	}
+}

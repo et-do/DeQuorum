@@ -21,6 +21,8 @@ from psycopg_pool import ConnectionPool
 if TYPE_CHECKING:
     from psycopg import Connection
 
+    from dequorum.chat.store import ChatStore
+    from dequorum.comments.store import CommentStore
     from dequorum.identity.store import IdentityStore
     from dequorum.knowledge.store import ContributionStore
     from dequorum.taxonomy.store import CategoryStore
@@ -98,3 +100,19 @@ def open_category_store() -> Iterator[CategoryStore]:
 
     with _connection() as conn:
         yield CategoryStore(conn)
+
+
+@contextmanager
+def open_chat_store() -> Iterator[ChatStore]:
+    from dequorum.chat.store import ChatStore
+
+    with _connection() as conn:
+        yield ChatStore(conn)
+
+
+@contextmanager
+def open_comment_store() -> Iterator[CommentStore]:
+    from dequorum.comments.store import CommentStore
+
+    with _connection() as conn:
+        yield CommentStore(conn)

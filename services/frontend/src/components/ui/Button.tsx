@@ -23,7 +23,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
 			ref={ref}
 			type={type ?? "button"}
 			className={cn(
-				"inline-flex items-center justify-center gap-2 border font-mono uppercase tracking-wider transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fg focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-50",
+				"inline-flex items-center justify-center gap-2 rounded-md border font-mono uppercase tracking-wider transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-fg focus-visible:ring-offset-2 focus-visible:ring-offset-bg disabled:pointer-events-none disabled:opacity-50",
 				size === "md" && "px-4 py-2 text-sm",
 				size === "lg" && "px-6 py-3 text-base",
 				variant === "primary" && "border-accent bg-accent text-accent-fg hover:opacity-90",

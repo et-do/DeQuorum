@@ -3,7 +3,7 @@ import { createRouter, RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { ErrorBoundary } from "@/components/layout/ErrorBoundary";
-import { AccountProvider } from "@/lib/account";
+import { AuthProvider } from "@/lib/auth";
 import { RolesProvider } from "@/lib/roles";
 import { ThemeProvider } from "@/lib/theme";
 import { ToastsProvider } from "@/lib/toasts";
@@ -40,7 +40,7 @@ createRoot(rootEl).render(
 	<StrictMode>
 		<QueryClientProvider client={queryClient}>
 			<ThemeProvider>
-				<AccountProvider>
+				<AuthProvider>
 					<RolesProvider>
 						<ToastsProvider>
 							<ErrorBoundary>
@@ -48,7 +48,7 @@ createRoot(rootEl).render(
 							</ErrorBoundary>
 						</ToastsProvider>
 					</RolesProvider>
-				</AccountProvider>
+				</AuthProvider>
 			</ThemeProvider>
 		</QueryClientProvider>
 	</StrictMode>,

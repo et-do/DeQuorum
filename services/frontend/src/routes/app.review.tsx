@@ -1,26 +1,26 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
-import type { ContributionWithVotes, Expert } from "@/lib/api";
-import { castVote, getReviewQueue, listExperts } from "@/lib/api";
+import type { ContributionWithVotes } from "@/lib/api";
+import { castVote, getReviewQueue } from "@/lib/api";
 import { useToasts } from "@/lib/toasts";
 import { useReviewStream } from "@/lib/useReviewStream";
 
 export const Route = createFileRoute("/app/review")({
 	component: ReviewRoute,
 	loader: async () => {
-		const [queue, experts] = await Promise.all([getReviewQueue(), listExperts()]);
-		return { queue, experts };
+		const queue = await getReviewQueue();
+		return { queue };
 	},
 });
 
 function ReviewRoute() {
-	const { queue: initialQueue, experts } = Route.useLoaderData();
+	const { queue: initialQueue } = Route.useLoaderData();
 	const stream = useReviewStream();
 	const queue = stream.data ?? initialQueue;
 
@@ -40,7 +40,7 @@ function ReviewRoute() {
 			) : (
 				<ul className="space-y-3">
 					{queue.map((c) => (
-						<ReviewCard key={c.contribution_id} c={c} experts={experts} />
+						<ReviewCard key={c.contribution_id} c={c} />
 					))}
 				</ul>
 			)}
@@ -48,13 +48,12 @@ function ReviewRoute() {
 	);
 }
 
-function ReviewCard({ c, experts }: { c: ContributionWithVotes; experts: Expert[] }) {
+function ReviewCard({ c }: { c: ContributionWithVotes }) {
 	const qc = useQueryClient();
 	const { toast } = useToasts();
-	const [voter, setVoter] = useState(experts[0]?.expert_id ?? "");
 
 	const mutation = useMutation({
-		mutationFn: (score: -1 | 0 | 1) => castVote(c.contribution_id, { voter_id: voter, score }),
+		mutationFn: (score: -1 | 0 | 1) => castVote(c.contribution_id, { score }),
 		onSuccess: (res) => {
 			qc.invalidateQueries({ queryKey: ["contributions"] });
 			toast(`Vote cast · tally ${res.tally >= 0 ? `+${res.tally}` : res.tally}`, {
@@ -76,25 +75,13 @@ function ReviewCard({ c, experts }: { c: ContributionWithVotes; experts: Expert[
 						params={{ id: c.contribution_id }}
 						className="font-bold tracking-tight hover:underline"
 					>
-						{c.expert_id}
+						{c.primary_category_id}
 					</Link>
 					<Badge tone="muted">tally {c.tally >= 0 ? `+${c.tally}` : c.tally}</Badge>
 				</div>
 				<p className="mt-3 text-sm text-fg-muted">{c.text}</p>
 
 				<div className="mt-4 flex flex-wrap items-center gap-3">
-					<label className="text-xs uppercase tracking-widest text-fg-subtle">Vote as</label>
-					<select
-						value={voter}
-						onChange={(e) => setVoter(e.target.value)}
-						className="border border-border bg-bg px-2 py-1 text-sm focus:border-border-strong focus:outline-none"
-					>
-						{experts.map((e) => (
-							<option key={e.expert_id} value={e.expert_id}>
-								{e.expert_id}
-							</option>
-						))}
-					</select>
 					<Button variant="ghost" onClick={() => mutation.mutate(1)} disabled={mutation.isPending}>
 						+1
 					</Button>

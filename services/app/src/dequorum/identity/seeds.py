@@ -82,3 +82,42 @@ def contributor_id_for(slug: str) -> str:
     """Resolve a seed-expert slug to its contributor_id."""
     contributor, _ = seed_contributor_for(slug)
     return contributor.contributor_id
+
+
+def commenter_for_uid(uid: str, display_name: str | None = None) -> tuple[str, bytes]:
+    """Return (contributor_id, private_key) for a Firebase-authed user.
+
+    The contributor_id is derived by building a full Contributor record
+    so it matches the id any other call site would compute for the same
+    uid. The same `(uid, key)` pair always yields the same id.
+
+    DEV PLACEHOLDER: derives a deterministic Ed25519 keypair from the
+    uid using the same scheme seed contributors use. Production swaps
+    in a Firebase-uid → registered-contributor lookup with no schema or
+    wire-format change.
+    """
+    contributor, priv = commenter_record_for_uid(uid, display_name)
+    return contributor.contributor_id, priv
+
+
+def commenter_record_for_uid(
+    uid: str, display_name: str | None = None
+) -> tuple[Contributor, bytes]:
+    """Return (Contributor, private_key) for a Firebase-authed user.
+
+    Same dev derivation as `commenter_for_uid` but hands back a fully
+    built Contributor record — useful for the submission pipeline,
+    which needs the contributor object, not just the id.
+    """
+    pub = _seed_public_key(f"uid:{uid}")
+    priv = _seed_private_key(f"uid:{uid}")
+    agreement = current_agreement()
+    contributor = Contributor.create(
+        display_name=display_name or f"user-{uid[:8]}",
+        public_key=pub,
+        signing_key=priv,
+        agreement_version=agreement.version,
+        agreement_text=agreement.text,
+        tier=Tier.EMAIL_VERIFIED,
+    )
+    return contributor, priv

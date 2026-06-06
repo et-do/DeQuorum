@@ -1,0 +1,227 @@
+// DeQuorum data model — canonical schema documentation.
+//
+// Renders at https://dbdiagram.io/d (paste contents in).
+//
+// Two layers documented here:
+//   - PRESENT — tables that exist in src/dequorum/knowledge/store.py today (v0.1).
+//   - PLANNED — tables added by the contributor-intake architecture (v0.2+),
+//               sketched in ../../docs/architecture/contributor-intake.md.
+//
+// Both layers share the same primitives: every row is signed by an Ed25519
+// keypair, and every signature is recorded so the proof chain is auditable
+// end-to-end.
+
+Project DeQuorum {
+  database_type: "Postgres 16 (Cloud SQL in production)"
+  Note: '''
+    Crowdsourced, peer-reviewed, attributable AI network.
+    Every signed entity is content-addressed by a deterministic hash.
+  '''
+}
+
+// ============================================================================
+// PRESENT (v0.1) — what's actually in src/dequorum/knowledge/store.py today.
+// ============================================================================
+
+Table contributions [headercolor: #2563eb] {
+  contribution_id      text [pk, note: 'blake2b digest of canonical (contributor_id, primary_category_id, text, citations)']
+  lineage_id           text [not null, ref: > contribution_lineages.lineage_id]
+  version_number       integer [not null, default: 1]
+  parent_version       integer
+  contributor_id       text [not null, note: 'the human/org who submitted it']
+  primary_category_id  text [not null, default: 'uncategorized', note: 'taxonomy node this claim lives under; routing target']
+  text                 text [not null, note: 'the factual claim itself']
+  citations_json       text [not null, note: 'JSON array of URLs supporting the claim']
+
+  // Signature fields (Ed25519 over canonical bytes of the claim)
+  sig_node_id      text [not null, note: 'signer node id; matches contributor_id']
+  sig_input_hash   text [not null]
+  sig_output_hash  text [not null]
+  sig_digest       text [not null, note: 'the actual Ed25519 signature digest']
+
+  status           text [not null, default: 'pending', note: "pending | approved | rejected | superseded"]
+
+  Indexes {
+    primary_category_id [name: 'idx_contributions_category']
+    contributor_id      [name: 'idx_contributions_contributor']
+    lineage_id          [name: 'idx_contributions_lineage']
+    status              [name: 'idx_contributions_status']
+  }
+
+  Note: 'A signed factual claim filed under a category. The atomic unit of attribution and inference retrieval. As of v0.2, the Expert persona layer was collapsed into the Category taxonomy — see migration 0004.'
+}
+
+Table votes [headercolor: #16a34a] {
+  vote_id          text [pk, note: 'blake2b digest of (contribution_id, voter_id) — same slot, re-voting overwrites the row']
+  contribution_id  text [not null, ref: > contributions.contribution_id]
+  voter_id         text [not null, note: 'contributor id of the voter']
+  score            integer [not null, note: '-1, 0, or +1; enforced by CHECK constraint']
+
+  // Signature fields (Ed25519 over canonical bytes of the vote)
+  sig_node_id      text [not null]
+  sig_input_hash   text [not null]
+  sig_output_hash  text [not null]
+  sig_digest       text [not null]
+
+  Indexes {
+    contribution_id [name: 'idx_votes_contribution']
+    (contribution_id, voter_id) [unique, name: 'one_vote_per_voter_per_contribution']
+  }
+
+  Note: '''
+    A signed +1/0/-1 vote from one voter on one contribution.
+    One row per (contribution, voter) slot — re-voting updates score in place
+    but preserves the constraint that you vote at most once per contribution.
+    Self-voting is disallowed at the service layer (review.ReviewService).
+  '''
+}
+
+Table comments [headercolor: #f59e0b] {
+  comment_id              text [pk, note: 'dq:c:<24-hex> — content-hash of signed payload']
+  contribution_id         text [not null, ref: > contributions.contribution_id, note: 'cascade-deletes with the parent contribution']
+  parent_comment_id       text [ref: > comments.comment_id, note: 'null = top-level reply; otherwise threads under another comment']
+  author_id               text [not null, note: 'dq:u:<hash> for end users; dq:<slug>:<hash> for seed contributors. Not FK-bound today — comments allowed from any signed-in user before full contributor onboarding']
+  body                    text [not null, note: 'markdown; max 10,000 chars']
+  line_anchor_start       integer [note: 'optional 1-indexed line range into parent contribution.text; reserved for diff-view UI in Phase 3']
+  line_anchor_end         integer
+
+  created_at              bigint [not null, note: 'unix seconds; part of signed payload so identical text at different times yields distinct ids']
+  redacted_at             bigint [note: 'soft-delete timestamp; row stays, body hidden in API']
+  redacted_by             text [note: 'whose redaction it was — author or moderator']
+
+  replaces_comment_id     text [ref: > comments.comment_id, note: 'set on the "edit" path: a new comment supersedes an older one']
+  replaced_by_comment_id  text [ref: > comments.comment_id, note: 'forward link to the replacement; updated transactionally when replacement is inserted']
+
+  // Signature fields — Ed25519 over canonical (contribution_id, parent, author, body, line_anchor, replaces, created_at)
+  sig_node_id             text [not null]
+  sig_input_hash          text [not null]
+  sig_output_hash         text [not null]
+  sig_digest              text [not null]
+
+  Indexes {
+    (contribution_id, created_at) [name: 'idx_comments_contribution']
+    parent_comment_id            [name: 'idx_comments_parent']
+    author_id                    [name: 'idx_comments_author']
+  }
+
+  Note: '''
+    Phase 1 of contribution governance — see contribution-governance.md.
+    Threaded discussion attached to a contribution. Append-only with
+    soft-redaction. Same Ed25519 signature primitive as contributions
+    and votes; the proof chain is preserved end-to-end.
+
+    Replacement (the user-facing "edit") is bidirectional: the new
+    comment's `replaces_comment_id` and the original's
+    `replaced_by_comment_id` are both written in the same transaction.
+  '''
+}
+
+// ============================================================================
+// PLANNED (v0.2+) — contributor-intake tables described in
+// ../../docs/architecture/contributor-intake.md, not yet in the codebase.
+// ============================================================================
+
+Table contributors [headercolor: #9333ea] {
+  contributor_id        text [pk, note: 'stable handle; preferred form: did:web:... or did:key:...']
+  display_name          text [not null]
+  public_key            blob [not null, note: 'Ed25519 verification key']
+  agreement_version     text [not null, note: 'which TOS version was signed']
+  agreement_signed_at   integer [not null, note: 'epoch seconds; UI shows local time']
+  agreement_signature   text [not null, note: "contributor's signature over the agreement text + version"]
+  created_at            integer [not null]
+
+  Note: '''
+    The human (or organization) behind a signing keypair.
+    Today contribution.contributor_id is a free string; once this table lands,
+    it becomes a foreign key.
+    A single contributor can publish under multiple categories.
+  '''
+}
+
+Table credentials [headercolor: #9333ea] {
+  credential_id     text [pk, note: 'W3C Verifiable Credential id']
+  contributor_id    text [not null, ref: > contributors.contributor_id]
+  issuer_did        text [not null, note: "DID of the issuing authority (medical board, university, etc.)"]
+  credential_type   text [not null, note: 'JSON array, e.g. ["VerifiableCredential","MedicalLicense"]']
+  proof_jwt         text [not null, note: 'the signed VC itself (opaque, replayable)']
+  verified_at       integer [not null, note: 'when we last validated the issuer signature']
+  status            text [not null, default: 'active', note: 'active | revoked | expired']
+
+  Note: '''
+    OPTIONAL credentials a contributor has attached to their identity.
+    Signal-only — never gates participation, but the voting UI surfaces these
+    as badges so reviewers can weight expertise signals.
+  '''
+}
+
+Table documents [headercolor: #ea580c] {
+  document_id        text [pk, note: 'content-hash of raw bytes — same bytes always produce same id']
+  contributor_id     text [not null, ref: > contributors.contributor_id]
+  title              text [not null]
+  source_uri         text [note: 'https://... if the document was fetched from elsewhere; null for pasted text']
+  media_type         text [not null, note: 'text/markdown, application/pdf, text/plain, etc.']
+  raw_bytes_digest   text [not null, note: 'blake2b digest of original bytes for tamper-detection']
+
+  // Signature fields — contributor signs the (id, title, source_uri, raw_bytes_digest)
+  sig_node_id        text [not null]
+  sig_input_hash     text [not null]
+  sig_output_hash    text [not null]
+  sig_digest         text [not null]
+
+  submitted_at       integer [not null]
+  status             text [not null, default: 'extracting', note: 'extracting | ready | failed']
+
+  Note: '''
+    The source artifact behind one or more bulk-submitted contributions.
+    The Document itself never enters inference — its extracted claims do.
+    Stored so citation chains can resolve back to the verifiable original.
+  '''
+}
+
+Table contribution_sources [headercolor: #ea580c] {
+  contribution_id     text [pk, ref: > contributions.contribution_id]
+  document_id         text [not null, ref: > documents.document_id]
+  span_start          integer [note: 'byte offset in raw document; for diffing if source is revised']
+  span_end            integer
+  extraction_method   text [not null, note: 'manual | llm-suggested | structured-form']
+
+  Note: '''
+    Links a Contribution back to the Document it was extracted from.
+    Optional — not all contributions come from an uploaded document (paste-text bypass).
+    Not part of the contribution_id hash, so dedup on (contributor, category, text, citations) still works.
+  '''
+}
+
+// ============================================================================
+// LATE-STAGE (v1.x+) — reserves shape for future entities.
+// ============================================================================
+
+Table reputation [headercolor: #6b7280] {
+  contributor_id    text [pk, ref: > contributors.contributor_id]
+  domain_tag        text [note: 'per-domain reputation, e.g. "python", "medical-cardiology"']
+  vote_count        integer [not null, default: 0]
+  consensus_rate    real [not null, default: 0.0, note: 'fraction of votes that matched eventual consensus']
+  last_updated_at   integer [not null]
+
+  Indexes {
+    (contributor_id, domain_tag) [unique]
+  }
+
+  Note: 'Reputation-weighted voting: voters with higher consensus_rate get more weight. Required for sybil-resistance before public launch.'
+}
+
+Table ledger_entries [headercolor: #6b7280] {
+  entry_id          text [pk]
+  query_id          text [not null, note: 'the inference call that triggered this credit']
+  recipient_id      text [not null, note: 'contributor, reviewer, or compute host id']
+  recipient_role    text [not null, note: 'contributor | reviewer | compute_host | operator | treasury']
+  amount            integer [not null, note: 'currency-minor-units (e.g. cents); positive = credit, negative = debit']
+  reason            text [not null, note: "e.g. 'contribution_cited' or 'inference_served'"]
+  created_at        integer [not null]
+
+  Note: '''
+    Persistent ledger of revenue distributions per query.
+    Today AttributionLedger lives in memory; once revenue is real, this table
+    backs the same primitive.
+  '''
+}

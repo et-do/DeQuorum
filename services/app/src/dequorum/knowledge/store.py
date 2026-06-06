@@ -41,7 +41,7 @@ __all__ = [
 
 _CONTRIBUTION_COLS = (
     "contribution_id, lineage_id, version_number, parent_version, "
-    "expert_id, contributor_id, primary_category_id, "
+    "contributor_id, primary_category_id, "
     "text, citations_json, "
     "sig_node_id, sig_input_hash, sig_output_hash, sig_digest, "
     "status"
@@ -93,14 +93,13 @@ class ContributionStore:
         self._conn.execute(
             """INSERT INTO contributions
             (contribution_id, lineage_id, version_number, parent_version,
-             expert_id, contributor_id, primary_category_id, text, citations_json,
+             contributor_id, primary_category_id, text, citations_json,
              sig_node_id, sig_input_hash, sig_output_hash, sig_digest, status)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (contribution_id) DO UPDATE SET
                 lineage_id          = EXCLUDED.lineage_id,
                 version_number      = EXCLUDED.version_number,
                 parent_version      = EXCLUDED.parent_version,
-                expert_id           = EXCLUDED.expert_id,
                 contributor_id      = EXCLUDED.contributor_id,
                 primary_category_id = EXCLUDED.primary_category_id,
                 text                = EXCLUDED.text,
@@ -115,7 +114,6 @@ class ContributionStore:
                 c.lineage_id,
                 c.version_number,
                 c.parent_version,
-                c.expert_id,
                 c.contributor_id,
                 c.primary_category_id,
                 c.text,
@@ -136,20 +134,6 @@ class ContributionStore:
             (contribution_id,),
         ).fetchone()
         return _row_to_contribution(row) if row else None
-
-    def list_for_expert(
-        self, expert_id: str, *, status: str | None = None
-    ) -> list[Contribution]:
-        if status is not None and status not in VALID_STATUSES:
-            raise ValueError(f"invalid status: {status!r}")
-        sql = f"SELECT {_CONTRIBUTION_COLS} FROM contributions WHERE expert_id = %s"
-        params: tuple = (expert_id,)
-        if status is not None:
-            sql += " AND status = %s"
-            params = (expert_id, status)
-        sql += " ORDER BY contribution_id"
-        rows = self._conn.execute(sql, params).fetchall()
-        return [_row_to_contribution(r) for r in rows]
 
     def list_by_status(self, status: str) -> list[Contribution]:
         if status not in VALID_STATUSES:
@@ -248,7 +232,7 @@ class ContributionStore:
     def current_for_lineage(self, lineage_id: str) -> Contribution | None:
         row = self._conn.execute(
             """SELECT c.contribution_id, c.lineage_id, c.version_number, c.parent_version,
-                      c.expert_id, c.contributor_id, c.primary_category_id,
+                      c.contributor_id, c.primary_category_id,
                       c.text, c.citations_json,
                       c.sig_node_id, c.sig_input_hash, c.sig_output_hash, c.sig_digest,
                       c.status
@@ -349,16 +333,15 @@ def _row_to_contribution(row: tuple) -> Contribution:
         lineage_id=row[1],
         version_number=int(row[2]),
         parent_version=int(row[3]) if row[3] is not None else None,
-        expert_id=row[4],
-        contributor_id=row[5],
-        primary_category_id=row[6],
-        text=row[7],
-        citations=tuple(json.loads(row[8])),
+        contributor_id=row[4],
+        primary_category_id=row[5],
+        text=row[6],
+        citations=tuple(json.loads(row[7])),
         signature=Signature(
-            node_id=row[9],
-            input_hash=row[10],
-            output_hash=row[11],
-            digest=row[12],
+            node_id=row[8],
+            input_hash=row[9],
+            output_hash=row[10],
+            digest=row[11],
         ),
     )
 

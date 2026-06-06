@@ -6,26 +6,26 @@ import { Card, CardHeader } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Skeleton } from "@/components/ui/Skeleton";
-import { useAccount } from "@/lib/account";
 import { listContributions } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/app/contribute/")({
 	component: ContributeIndex,
 });
 
 function ContributeIndex() {
-	const { account } = useAccount();
+	const { user } = useAuth();
 	const mine = useQuery({
-		queryKey: ["contributions", { contributor: account?.contributor_id }],
-		queryFn: () => listContributions(account ? { contributor: account.contributor_id } : {}),
-		enabled: !!account,
+		queryKey: ["contributions", { contributor: user?.uid }],
+		queryFn: () => listContributions(user ? { contributor: user.uid } : {}),
+		enabled: !!user,
 	});
 
 	return (
 		<div className="space-y-8">
 			<PageHeader
 				title="Contribute"
-				description="Publish signed claims tied to an expert persona."
+				description="File signed claims under a curated category."
 				actions={
 					<Link to="/app/contribute/new">
 						<Button size="md">New submission</Button>
@@ -34,14 +34,14 @@ function ContributeIndex() {
 			/>
 
 			<Card>
-				<CardHeader title="My contributions" subtitle={account?.contributor_id ?? "unsigned"} />
-				{!account ? (
+				<CardHeader title="My contributions" subtitle={user?.uid ?? "unsigned"} />
+				{!user ? (
 					<EmptyState
-						title="No account"
-						description="Sign up to track your contributions."
+						title="Not signed in"
+						description="Sign in to track your contributions."
 						action={
-							<Link to="/app/account">
-								<Button>Go to account</Button>
+							<Link to="/signin">
+								<Button>Sign in</Button>
 							</Link>
 						}
 					/>
@@ -73,7 +73,7 @@ function ContributeIndex() {
 									params={{ id: c.contribution_id }}
 									className="font-bold tracking-tight hover:underline"
 								>
-									{c.expert_id}
+									{c.primary_category_id}
 								</Link>
 								<div className="flex items-center gap-2">
 									{c.status && (

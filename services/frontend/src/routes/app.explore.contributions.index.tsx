@@ -6,7 +6,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Skeleton } from "@/components/ui/Skeleton";
 import type { Contribution, Status } from "@/lib/api";
-import { listContributions, listExperts } from "@/lib/api";
+import { listCategories, listContributions } from "@/lib/api";
 
 const STATUSES: { value: Status | ""; label: string }[] = [
 	{ value: "", label: "All" },
@@ -17,14 +17,14 @@ const STATUSES: { value: Status | ""; label: string }[] = [
 ];
 
 interface SearchParams {
-	expert?: string;
+	category?: string;
 	status?: Status;
 	q?: string;
 }
 
 export const Route = createFileRoute("/app/explore/contributions/")({
 	validateSearch: (search: Record<string, unknown>): SearchParams => ({
-		expert: typeof search.expert === "string" ? search.expert : undefined,
+		category: typeof search.category === "string" ? search.category : undefined,
 		status:
 			search.status === "pending" ||
 			search.status === "approved" ||
@@ -52,7 +52,7 @@ function ContributionsList() {
 		return () => window.clearTimeout(id);
 	}, [qInput, navigate, search]);
 
-	const experts = useQuery({ queryKey: ["experts"], queryFn: listExperts });
+	const categories = useQuery({ queryKey: ["categories"], queryFn: listCategories });
 	const contribs = useQuery({
 		queryKey: ["contributions", search],
 		queryFn: () => listContributions(search),
@@ -89,22 +89,22 @@ function ContributionsList() {
 					))}
 				</select>
 				<select
-					value={search.expert ?? ""}
+					value={search.category ?? ""}
 					onChange={(e) =>
 						navigate({
 							to: "/app/explore/contributions",
 							search: {
 								...search,
-								expert: e.target.value || undefined,
+								category: e.target.value || undefined,
 							},
 						})
 					}
 					className="border border-border bg-bg px-2 py-2 text-sm focus:border-border-strong focus:outline-none"
 				>
-					<option value="">All experts</option>
-					{experts.data?.map((e) => (
-						<option key={e.expert_id} value={e.expert_id}>
-							{e.expert_id}
+					<option value="">All categories</option>
+					{categories.data?.map((c) => (
+						<option key={c.category_id} value={c.category_id}>
+							{c.display_name}
 						</option>
 					))}
 				</select>
@@ -138,7 +138,7 @@ function Row({ c }: { c: Contribution }) {
 					params={{ id: c.contribution_id }}
 					className="font-bold tracking-tight hover:underline"
 				>
-					{c.expert_id}
+					{c.primary_category_id}
 				</Link>
 				<div className="flex items-center gap-2">
 					{c.status && (

@@ -24,6 +24,10 @@ dependencies = [
     # Database
     "psycopg[binary,pool]>=3.2",
     "alembic>=1.13",
+    # Auth — verify Firebase ID tokens (uses FIREBASE_AUTH_EMULATOR_HOST
+    # automatically in dev; falls back to a Google credentials lookup in
+    # production).
+    "firebase-admin>=6.5",
     # Embeddings (CPU-only torch via [tool.uv.sources] below — saves ~3 GB)
     "sentence-transformers>=5.0",
     "numpy>=2.4",

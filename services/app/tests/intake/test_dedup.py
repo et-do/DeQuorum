@@ -9,7 +9,6 @@ from dequorum.routing.embedder import HashEmbedder
 
 def _approved(text: str, category: str = "test") -> Contribution:
     return Contribution.create(
-        expert_id="ex",
         contributor_id="dq:test",
         primary_category_id=category,
         text=text,

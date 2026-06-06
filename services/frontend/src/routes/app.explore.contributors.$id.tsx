@@ -57,7 +57,7 @@ function ContributorDetail() {
 									params={{ id: co.contribution_id }}
 									className="hover:underline"
 								>
-									{co.expert_id}
+									{co.primary_category_id}
 								</Link>
 								<span className="text-xs uppercase tracking-widest text-fg-subtle">
 									{co.status} · {co.tally >= 0 ? `+${co.tally}` : co.tally}

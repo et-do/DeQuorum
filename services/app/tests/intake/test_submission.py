@@ -48,7 +48,6 @@ def test_happy_path_creates_pending_contribution() -> None:
     result = pipeline.submit(
         contributor=contributor,
         contributor_signing_key=SIGNING_KEY,
-        expert_id="python-async",
         text=_valid_text(),
         citations=("https://docs.python.org/3/library/asyncio-task.html",),
         primary_category_id="test",
@@ -68,7 +67,6 @@ def test_unknown_category_rejected() -> None:
         pipeline.submit(
             contributor=_make_contributor(),
             contributor_signing_key=SIGNING_KEY,
-            expert_id="x",
             text=_valid_text(),
             citations=("https://example.com",),
             primary_category_id="not-a-real-category",
@@ -82,7 +80,6 @@ def test_missing_citation_rejected() -> None:
         pipeline.submit(
             contributor=_make_contributor(),
             contributor_signing_key=SIGNING_KEY,
-            expert_id="x",
             text=_valid_text(),
             citations=(),
             primary_category_id="test",
@@ -96,7 +93,6 @@ def test_http_citation_rejected() -> None:
         pipeline.submit(
             contributor=_make_contributor(),
             contributor_signing_key=SIGNING_KEY,
-            expert_id="x",
             text=_valid_text(),
             citations=("http://example.com",),
             primary_category_id="test",
@@ -110,7 +106,6 @@ def test_text_too_short_rejected() -> None:
         pipeline.submit(
             contributor=_make_contributor(),
             contributor_signing_key=SIGNING_KEY,
-            expert_id="x",
             text="too short",
             citations=("https://example.com",),
             primary_category_id="test",
@@ -121,7 +116,6 @@ def test_duplicate_surfaced_but_does_not_block_by_default() -> None:
     contrib_store, cat_store = _stores()
     # Seed an approved contribution that matches text exactly
     existing = Contribution.create(
-        expert_id="x",
         contributor_id="dq:seed",
         primary_category_id="test",
         text=_valid_text(),
@@ -140,7 +134,6 @@ def test_duplicate_surfaced_but_does_not_block_by_default() -> None:
     result = pipeline.submit(
         contributor=_make_contributor(),
         contributor_signing_key=SIGNING_KEY,
-        expert_id="x",
         text=_valid_text(),
         citations=("https://example.com",),
         primary_category_id="test",
@@ -155,7 +148,6 @@ def test_duplicate_surfaced_but_does_not_block_by_default() -> None:
 def test_block_on_likely_duplicate_rejects() -> None:
     contrib_store, cat_store = _stores()
     existing = Contribution.create(
-        expert_id="x",
         contributor_id="dq:seed",
         primary_category_id="test",
         text=_valid_text(),
@@ -176,7 +168,6 @@ def test_block_on_likely_duplicate_rejects() -> None:
         pipeline.submit(
             contributor=_make_contributor(),
             contributor_signing_key=SIGNING_KEY,
-            expert_id="x",
             text=_valid_text(),
             citations=("https://example.com",),
             primary_category_id="test",
@@ -191,7 +182,6 @@ def test_update_creates_v2_in_same_lineage() -> None:
     first = pipeline.submit(
         contributor=contributor,
         contributor_signing_key=SIGNING_KEY,
-        expert_id="x",
         text=_valid_text(),
         citations=("https://example.com",),
         primary_category_id="test",
@@ -205,7 +195,6 @@ def test_update_creates_v2_in_same_lineage() -> None:
     v2 = pipeline.submit(
         contributor=contributor,
         contributor_signing_key=SIGNING_KEY,
-        expert_id="x",
         text=updated_text,
         citations=("https://example.com",),
         primary_category_id="test",
@@ -224,7 +213,6 @@ def test_update_unknown_lineage_rejected() -> None:
         pipeline.submit(
             contributor=_make_contributor(),
             contributor_signing_key=SIGNING_KEY,
-            expert_id="x",
             text=_valid_text(),
             citations=("https://example.com",),
             primary_category_id="test",

@@ -2,24 +2,25 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from dequorum.benchmark.questions import BenchmarkQuestion
 from dequorum.core.errors import CompositionError
-from dequorum.experts import ExpertRegistry
 from dequorum.inference.base_model import BaseModel
 from dequorum.inference.pipeline import NetworkResponse, Pipeline
 from dequorum.knowledge.store import ContributionStore
 from dequorum.retrieval import Retriever
+from dequorum.taxonomy.category import Category
 
 VANILLA_SYSTEM_PROMPT = (
     "You are a helpful, accurate AI assistant. Answer the user's question concisely."
 )
 
-RouterFactory = Callable[[ExpertRegistry], object]
-"""Returns a Router (KeywordRouter | EmbeddingRouter) given a registry."""
+RouterFactory = Callable[[Sequence[Category]], object]
+"""Returns a Router (KeywordRouter | EmbeddingRouter) given a list of
+routable categories."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,7 +45,6 @@ class BenchmarkReport:
     results: tuple[BenchmarkResult, ...]
     model_label: str
     router_label: str
-    composition_label: str
     notes: tuple[str, ...] = field(default_factory=tuple)
 
 
@@ -52,7 +52,7 @@ def _summarize_routing(response: NetworkResponse | None) -> str | None:
     if response is None:
         return None
     selected = ", ".join(
-        f"{s.expert.expert_id}({s.score:.2f})" for s in response.routing.selected
+        f"{s.category.category_id}({s.score:.2f})" for s in response.routing.selected
     )
     return f"{response.routing.method}: [{selected}]"
 
@@ -80,13 +80,11 @@ def _dequorum_condition(
     response, error = _run_pipeline_safely(pipeline, question)
     if response is None:
         return ConditionResult(answer=None, error=error)
-
-    answer_text = response.expert_answers[0].answer if response.expert_answers else ""
-    retrieved_count = sum(len(a.retrieved) for a in response.expert_answers)
+    answer = response.answer
     return ConditionResult(
-        answer=answer_text,
+        answer=answer.answer if answer is not None else "",
         routing_summary=_summarize_routing(response),
-        retrieved_count=retrieved_count if with_retrieval else 0,
+        retrieved_count=(len(answer.retrieved) if (answer and with_retrieval) else 0),
         chain_length=len(response.proof.chain),
     )
 
@@ -95,25 +93,19 @@ def run_benchmark(
     questions: tuple[BenchmarkQuestion, ...] | list[BenchmarkQuestion],
     *,
     model: BaseModel,
-    registry: ExpertRegistry,
+    categories: Sequence[Category],
     store: ContributionStore,
     router_factory: RouterFactory,
-    composition_factory: Callable[[], object] | None = None,
-    top_k: int = 2,
     retrieve_top_k: int = 3,
     model_label: str = "unknown",
     progress: Callable[[int, int, str], None] | None = None,
 ) -> BenchmarkReport:
     """Run all questions through the 3 conditions and return a structured report.
 
-    `progress` callback gets (index, total, question_text) per question so callers
-    can print live status — useful when the real model takes ~30-60s per generation.
+    `progress` callback gets (index, total, question_text) per question
+    so callers can print live status — useful when the real model takes
+    ~30-60s per generation.
     """
-    from dequorum.inference.composition import PickBestStrategy
-
-    if composition_factory is None:
-        composition_factory = PickBestStrategy
-
     results: list[BenchmarkResult] = []
     for i, q in enumerate(questions, start=1):
         if progress is not None:
@@ -122,21 +114,17 @@ def run_benchmark(
         vanilla = _vanilla_condition(model, q.text)
 
         full_pipeline = Pipeline(
-            router=router_factory(registry),
+            router=router_factory(categories),
             model=model,
             retriever=Retriever(store),
-            composition=composition_factory(),
-            top_k=top_k,
             retrieve_top_k=retrieve_top_k,
         )
         full = _dequorum_condition(full_pipeline, q.text, with_retrieval=True)
 
         no_retrieval_pipeline = Pipeline(
-            router=router_factory(registry),
+            router=router_factory(categories),
             model=model,
             retriever=None,
-            composition=composition_factory(),
-            top_k=top_k,
             retrieve_top_k=retrieve_top_k,
         )
         no_retrieval = _dequorum_condition(
@@ -158,7 +146,6 @@ def run_benchmark(
         router_label=router_factory.__name__
         if hasattr(router_factory, "__name__")
         else "router",
-        composition_label=getattr(composition_factory(), "name", "unknown"),
     )
 
 
@@ -169,7 +156,6 @@ def write_markdown_report(report: BenchmarkReport, output_path: Path) -> None:
     lines.append("")
     lines.append(f"- **Model:** `{report.model_label}`")
     lines.append(f"- **Router:** `{report.router_label}`")
-    lines.append(f"- **Composition:** `{report.composition_label}`")
     lines.append(f"- **Questions:** {len(report.results)}")
     lines.append("")
     lines.append("Each question is run three ways:")
@@ -178,15 +164,15 @@ def write_markdown_report(report: BenchmarkReport, output_path: Path) -> None:
         "1. **Vanilla** — bare base model, generic system prompt, no DeQuorum at all."
     )
     lines.append(
-        "2. **DeQuorum full** — route → retrieve approved contributions → expert + "
-        "signed chain."
+        "2. **DeQuorum full** — route → retrieve approved contributions → "
+        "category-grounded answer with signed contribution chain."
     )
     lines.append(
-        "3. **DeQuorum no-retrieval** — router + expert persona only, contributions "
-        "skipped (isolates the lift of retrieval)."
+        "3. **DeQuorum no-retrieval** — router + category persona only, "
+        "contributions skipped (isolates the lift of retrieval)."
     )
     lines.append("")
-    lines.append("Read all three. Judge honestly. Watch accuracy, citation, refusal.")
+    lines.append("Read all three. Judge honestly. Watch accuracy, refusal.")
     lines.append("")
     lines.append("---")
     lines.append("")
@@ -225,7 +211,9 @@ def write_markdown_report(report: BenchmarkReport, output_path: Path) -> None:
                 lines.append(r.dequorum_full.answer.strip())
                 lines.append("```")
             lines.append("")
-            lines.append("**C) DeQuorum no-retrieval (router + expert prompt only)**")
+            lines.append(
+                "**C) DeQuorum no-retrieval (router + category persona only)**"
+            )
             lines.append("")
             if r.dequorum_no_retrieval.answer is None:
                 lines.append(f"_Refused:_ `{r.dequorum_no_retrieval.error}`")

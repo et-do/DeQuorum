@@ -1,8 +1,9 @@
-"""BM25 lexical retrieval over an expert's contribution corpus.
+"""BM25 lexical retrieval over a category's contribution corpus.
 
-Lightweight (~50 LOC, pure Python, no model download). Well-suited for short
-factual snippets where exact term matching matters more than paraphrase. We swap
-in embedding-based retrieval in Week 3+ when corpus size justifies the cost.
+Lightweight (~50 LOC, pure Python, no model download). Well-suited
+for short factual snippets where exact term matching matters more
+than paraphrase. The category partition is the routing target; this
+index ranks within that partition.
 """
 
 from __future__ import annotations
@@ -101,7 +102,7 @@ class BM25Index:
 
 
 class Retriever:
-    """Per-expert BM25 retrieval. Only returns peer-approved contributions."""
+    """Per-category BM25 retrieval. Only returns peer-approved contributions."""
 
     def __init__(
         self, store: ContributionStore, *, status: str = STATUS_APPROVED
@@ -110,19 +111,19 @@ class Retriever:
         self._status = status
         self._cache: dict[str, BM25Index] = {}
 
-    def invalidate(self, expert_id: str | None = None) -> None:
-        if expert_id is None:
+    def invalidate(self, category_id: str | None = None) -> None:
+        if category_id is None:
             self._cache.clear()
         else:
-            self._cache.pop(expert_id, None)
+            self._cache.pop(category_id, None)
 
     def retrieve(
-        self, query: str, expert_id: str, top_k: int = 3
+        self, query: str, category_id: str, top_k: int = 3
     ) -> list[ScoredContribution]:
         if top_k < 1:
             raise ValueError(f"top_k must be >= 1, got {top_k}")
-        if expert_id not in self._cache:
-            self._cache[expert_id] = BM25Index.build(
-                self._store.list_for_expert(expert_id, status=self._status)
+        if category_id not in self._cache:
+            self._cache[category_id] = BM25Index.build(
+                self._store.list_by_category(category_id, status=self._status)
             )
-        return self._cache[expert_id].rank(query, top_k)
+        return self._cache[category_id].rank(query, top_k)

@@ -3,9 +3,8 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
-import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { useAccount } from "@/lib/account";
+import { useAuth } from "@/lib/auth";
 import { ALL_ROLES, type Role, useRoles } from "@/lib/roles";
 import { useTheme } from "@/lib/theme";
 import { useToasts } from "@/lib/toasts";
@@ -16,7 +15,7 @@ export const Route = createFileRoute("/app/account")({
 
 function AccountRoute() {
 	const navigate = useNavigate();
-	const { account, clear: clearAccount } = useAccount();
+	const { user, signOut: fbSignOut } = useAuth();
 	const { roles, set: setRoles, clear: clearRoles } = useRoles();
 	const { theme, setTheme } = useTheme();
 	const { toast } = useToasts();
@@ -29,8 +28,8 @@ function AccountRoute() {
 		toast(`Roles updated · ${next.size} active`, { tone: "success" });
 	}
 
-	function signOut() {
-		clearAccount();
+	async function signOut() {
+		await fbSignOut();
 		clearRoles();
 		navigate({ to: "/" });
 	}
@@ -40,24 +39,18 @@ function AccountRoute() {
 			<PageHeader title="Account" />
 
 			<Card>
-				<CardHeader title="Identity" subtitle="local profile" />
-				{!account ? (
-					<EmptyState
-						title="No local account"
-						description="Run the onboarding flow to generate a keypair."
-						action={<Button onClick={() => navigate({ to: "/onboarding" })}>Onboarding</Button>}
-					/>
-				) : (
-					<div className="flex items-center gap-4">
-						<Avatar seed={account.contributor_id} size={48} />
-						<div>
-							<div className="font-bold tracking-tight">{account.display_name}</div>
-							<div className="text-xs uppercase tracking-widest text-fg-subtle">
-								{account.contributor_id}
-							</div>
+				<CardHeader title="Identity" />
+				<div className="flex items-center gap-4">
+					<Avatar seed={user?.uid ?? "anon"} size={48} />
+					<div className="min-w-0 flex-1">
+						<div className="font-bold tracking-tight">
+							{user?.displayName || user?.email || "—"}
+						</div>
+						<div className="truncate text-xs uppercase tracking-widest text-fg-subtle">
+							{user?.uid}
 						</div>
 					</div>
-				)}
+				</div>
 			</Card>
 
 			<Card>
@@ -107,9 +100,9 @@ function AccountRoute() {
 				</div>
 			</Card>
 
-			{account && (
+			{user && (
 				<Card>
-					<CardHeader title="Sign out" subtitle="clears local account + roles" />
+					<CardHeader title="Sign out" subtitle="ends your current session" />
 					<Button variant="ghost" onClick={signOut}>
 						Sign out
 					</Button>

@@ -56,7 +56,7 @@ function LineageDetail() {
 							params={{ id: v.contribution_id }}
 							className="font-bold tracking-tight hover:underline"
 						>
-							{v.expert_id}
+							{v.primary_category_id}
 						</Link>
 						<p className="mt-1 text-sm text-fg-muted">{v.text}</p>
 					</li>

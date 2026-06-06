@@ -124,7 +124,7 @@ Tag merge / rename happens via voting too — a curator in the category can prop
 
 | Function | How the category matters |
 | --- | --- |
-| Routing | Embedding router uses category + tags as part of the expert profile text |
+| Routing | Embedding router uses category + tags as part of the category profile text |
 | Reputation | Earned per-category, not globally |
 | Browsing & discovery | Category tree is the navigation |
 | Sponsored verticals | A sponsor sponsors a category subtree |
@@ -317,10 +317,10 @@ The Document itself can be reviewable too (a "is this source reliable?" vote) fo
 
 This is the order in which capabilities become *load-bearing*, not the order in which they must be built. Some can happen in parallel.
 
-## 12. Data model deltas (cross-ref [data-model.dbml](data-model.dbml))
+## 12. Data model deltas (cross-ref [services/db/data-model.dbml](../../services/db/data-model.dbml))
 
 Already in the DBML:
-- `contributors`, `credentials`, `contributor_experts`, `documents`, `contribution_sources`, `reputation`, `ledger_entries`
+- `contributors`, `credentials`, `documents`, `contribution_sources`, `reputation`, `ledger_entries`
 
 New tables this doc adds:
 - `categories` — the curated taxonomy. `(category_id, parent_id, slug, display_name, description, created_at)`
@@ -334,7 +334,7 @@ Existing tables that change shape:
 - `contributions`: add `lineage_id`, `version_number`, `parent_version`, `primary_category_id`. The `contribution_id` content-hash now includes `(version_number, parent_version)` so each version is content-unique.
 - `votes`: add `weight` (the weight at the time of the vote, frozen) so audit can reconstruct how a tally was reached.
 
-I'll update [data-model.dbml](data-model.dbml) in the same PR that lands v0.2 — until then, the DBML and this doc agree on the existing tables and disagree on the new ones, which is fine for a forward-looking spec.
+I'll update [services/db/data-model.dbml](../../services/db/data-model.dbml) in the same PR that lands v0.2 — until then, the DBML and this doc agree on the existing tables and disagree on the new ones, which is fine for a forward-looking spec.
 
 ## 13. Open questions to revisit at build time
 
@@ -359,7 +359,7 @@ A quick summary of the threats and how we address each:
 | Garbage uploaded as "public domain" when it isn't | Agreement attestation (puts liability on contributor per DMCA safe-harbor pattern); takedown path |
 | Approved content becoming outdated | Versioning + lineage + update workflow; auto-follow citations track current |
 | Stale categories | Category proposals / merges go through reviewer vote |
-| Wrong expert routing | Embedding router + KeywordRouter fallback (already shipped); category restricts the candidate pool |
+| Wrong category routing | Embedding router + KeywordRouter fallback (already shipped); category restricts the candidate pool |
 | Single-instance lock-in | Federation in v1.0; signed lineages are portable; reputation per-instance (so no one instance can ban-effectively-globally) |
 
 ## 15. What this design depends on (assumptions to validate)

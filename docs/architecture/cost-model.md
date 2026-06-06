@@ -70,7 +70,7 @@ Pricing model used for this estimate: $10/month/end-user.
 
 - Pays: **$10/month** → ~600 queries → **~$0.017/query**
 - Comparison: ChatGPT Plus $20/mo, Claude Pro $20/mo. Competitive only if the
-  voting/expert quality story actually differentiates — otherwise users churn
+  voting / category-coverage quality story actually differentiates — otherwise users churn
   to the incumbent at 2× price.
 
 ### Contributor

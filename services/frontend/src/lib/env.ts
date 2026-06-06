@@ -13,6 +13,7 @@ export const SITE_NAME = "DeQuorum";
 export const NAV_LINKS = [
 	{ to: "/", label: "Home" },
 	{ to: "/about", label: "About" },
+	{ to: "/whitepaper", label: "Whitepaper" },
 	{ to: "/docs", label: "Docs" },
 	{ to: "/pricing", label: "Pricing" },
 ] as const;

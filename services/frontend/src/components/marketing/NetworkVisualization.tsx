@@ -12,15 +12,15 @@ import { cn } from "@/lib/cn";
  * are picked per story:
  *
  *   - **user** — one front-facing node
- *   - **experts** — 3 of the user's edge-connected neighbors
- *   - **contributor** — a node further out, neighbor of an expert
- *   - **host** — one of the expert nodes (where compute runs)
+ *   - **responders** — 3 of the user's edge-connected neighbors
+ *   - **contributor** — a node further out, neighbor of an responder
+ *   - **host** — one of the responder nodes (where compute runs)
  *
  * Beats:
  *
  *   0  ask         user node pulses (incoming question)
- *   1  route       3 query packets travel user → experts; experts flash
- *   2  cite        citation packet expert → contributor; contributor
+ *   1  route       3 query packets travel user → responders; responders flash
+ *   2  cite        citation packet responder → contributor; contributor
  *                  flashes; response packet contributor → user; user
  *                  flashes
  *   3  settle      tiny payment packets user → contributor, user → host
@@ -38,6 +38,31 @@ const ROTATION_SPEED = 0.0012;
 const STEP_MS = 3500;
 const GAP_MS = 1800;
 const FADE_MS = 500;
+/**
+ * Delay between the node burst firing and the label/lines for that beat
+ * appearing. Reads as: node "collides", then a moment later the text
+ * box + connection line resolve to explain what just happened.
+ */
+const LABEL_DELAY_MS = 280;
+
+type Role = "user" | "responder" | "contributor" | "host";
+
+/**
+ * Per-role visual config for bursts + connection lines. Monochrome but
+ * distinguished by size + line weight + an optional outer halo so each
+ * role reads as a different "kind of event" at a glance.
+ */
+const ROLE_STYLE: Record<Role, { maxR: number; lineW: number; halo: boolean; lineDash: number[] }> =
+	{
+		user: { maxR: 40, lineW: 2.0, halo: false, lineDash: [] },
+		responder: { maxR: 24, lineW: 1.0, halo: false, lineDash: [] },
+		contributor: { maxR: 32, lineW: 1.5, halo: true, lineDash: [] },
+		// Host line was dashed to "differentiate compute provider" but at
+		// this visual scale it read as broken/dotted, not semantic.
+		// Same solid stroke, slightly thinner — distinction comes from
+		// the smaller burst radius alone.
+		host: { maxR: 22, lineW: 0.8, halo: false, lineDash: [] },
+	};
 
 interface Point3 {
 	x: number;
@@ -53,19 +78,32 @@ interface Packet {
 	progress: number;
 	speed: number;
 	kind: Kind;
+	/** Fired once when `progress` first crosses 1.0. Lets the story
+	 * driver wait for "the packet actually got there" before bursting
+	 * the target node and showing the label — so text appears after
+	 * the traversal lands, not before it has even started. */
+	onArrive?: () => void;
 }
 
 interface Actors {
 	user: number;
-	experts: number[];
+	/** Background nodes that briefly light up while the router narrows
+	 * the search space — they represent the routed category's partition,
+	 * not any kind of persona or expert layer. */
+	responders: number[];
+	/** The contributor whose approved contribution(s) ended up in the
+	 * retrieval set for this question. */
 	contributor: number;
+	/** A compute host serving the inference for this query. */
 	host: number;
 }
 
 interface Story {
 	user: string;
 	question: string;
-	domain: string;
+	/** The taxonomy category the question routes into. Phrased as a
+	 * leaf-style id so it reads like real product copy. */
+	category: string;
 	contributor: string;
 	cited: string;
 }
@@ -74,49 +112,49 @@ const STORIES: Story[] = [
 	{
 		user: "Sam",
 		question: "asks about long-COVID brain fog",
-		domain: "neurology + immunology experts",
+		category: "medicine / neurology / post-viral",
 		contributor: "Dr. Chen",
 		cited: "Dr. Chen's review of post-viral cognitive symptoms",
 	},
 	{
 		user: "Priya",
 		question: "asks how to rebalance her 401(k)",
-		domain: "retirement-planning experts",
+		category: "finance / personal / retirement-planning",
 		contributor: "Eli",
 		cited: "Eli's analysis of glidepath strategies",
 	},
 	{
 		user: "Jordan",
 		question: "asks about lithium mining's water cost",
-		domain: "environmental scientists",
+		category: "climate / extraction / lithium",
 		contributor: "Anya",
 		cited: "Anya's field study from Salar de Atacama",
 	},
 	{
 		user: "Marisol",
 		question: "asks why her sourdough won't rise",
-		domain: "fermentation bakers",
+		category: "cooking / fermentation / sourdough",
 		contributor: "Tomás",
 		cited: "Tomás's notes on starter hydration",
 	},
 	{
 		user: "Devon",
 		question: "asks how Bauhaus influenced product design",
-		domain: "design historians",
+		category: "design / history / modernism",
 		contributor: "Yuki",
 		cited: "Yuki's essays on Ulm School lineage",
 	},
 	{
 		user: "Hana",
 		question: "asks when to see a cardiologist about chest pain",
-		domain: "cardiology + primary-care experts",
+		category: "medicine / cardiology / triage",
 		contributor: "Dr. Okafor",
 		cited: "Dr. Okafor's triage guidelines",
 	},
 	{
 		user: "Theo",
 		question: "asks what's underrated to see in Lisbon",
-		domain: "Portugal travel experts",
+		category: "travel / Portugal / Lisbon",
 		contributor: "Inês",
 		cited: "Inês's neighborhood walking guide",
 	},
@@ -138,6 +176,23 @@ function spherePoints(count: number): Point3[] {
 	return out;
 }
 
+/**
+ * A line connecting two nodes that a packet has traveled along during
+ * the current story. Stays visible (and accumulates with other traces
+ * from the same story) so the viewer sees the whole traversed path,
+ * not just the moving dot. Fades to 0 between stories.
+ */
+interface TraceLine {
+	from: number;
+	to: number;
+	role: Role;
+	/** Build-up coefficient — ramps to 1 as the corresponding packet
+	 * travels, holds at 1 while the story is active, fades to 0 once
+	 * the story resets. */
+	alpha: number;
+	target: number;
+}
+
 interface State {
 	points: Point3[];
 	adjacency: number[][];
@@ -154,8 +209,20 @@ interface State {
 	/** Per-slot connection-line opacity, eased each frame toward the
 	 * target value based on which beat is active. */
 	lineAlpha: { tl: number; tr: number; br: number; bl: number };
+	/** Persistent node-to-node traces for the current story. */
+	traces: TraceLine[];
 	rotation: number;
 	actors: Actors | null;
+}
+
+function roleOf(actors: Actors | null, idx: number): Role | null {
+	if (!actors) return null;
+	// Order matters: host overrides responder (since host ∈ responders).
+	if (idx === actors.user) return "user";
+	if (idx === actors.contributor) return "contributor";
+	if (idx === actors.host) return "host";
+	if (actors.responders.includes(idx)) return "responder";
+	return null;
 }
 
 function pickActors(state: State): Actors {
@@ -175,12 +242,12 @@ function pickActors(state: State): Actors {
 	// Experts: 3 neighbors of user.
 	const userNeighbors = adjacency[user]!.slice();
 	shuffle(userNeighbors);
-	const experts = userNeighbors.slice(0, Math.min(3, userNeighbors.length));
+	const responders = userNeighbors.slice(0, Math.min(3, userNeighbors.length));
 
-	// Contributor: a neighbor of one of the experts that isn't user/experts.
-	const used = new Set([user, ...experts]);
+	// Contributor: a neighbor of one of the responders that isn't user/responders.
+	const used = new Set([user, ...responders]);
 	let contributor = -1;
-	for (const e of experts) {
+	for (const e of responders) {
 		const cands = adjacency[e]!.filter((n) => !used.has(n));
 		if (cands.length > 0) {
 			contributor = cands[Math.floor(Math.random() * cands.length)]!;
@@ -197,10 +264,10 @@ function pickActors(state: State): Actors {
 		}
 	}
 
-	// Host: one of the experts (the node where compute physically runs).
-	const host = experts[Math.floor(Math.random() * experts.length)] ?? user;
+	// Host: one of the responders (the node where compute physically runs).
+	const host = responders[Math.floor(Math.random() * responders.length)] ?? user;
 
-	return { user, experts, contributor, host };
+	return { user, responders, contributor, host };
 }
 
 function shuffle<T>(arr: T[]): void {
@@ -259,6 +326,7 @@ export function NetworkVisualization({ className }: { className?: string }) {
 			nodeBurst: new Float32Array(points.length),
 			nodeBurstAge: new Float32Array(points.length),
 			lineAlpha: { tl: 0, tr: 0, br: 0, bl: 0 },
+			traces: [],
 			rotation: 0,
 			actors: null,
 		};
@@ -279,7 +347,6 @@ export function NetworkVisualization({ className }: { className?: string }) {
 
 		let raf = 0;
 		let lastSize = { w: 0, h: 0, dpr: 1 };
-		let untilAmbient = 90 + Math.floor(Math.random() * 60);
 
 		const render = () => {
 			const dpr = window.devicePixelRatio || 1;
@@ -364,14 +431,19 @@ export function NetworkVisualization({ className }: { className?: string }) {
 					from: { x: number; y: number },
 					to: { x: number; y: number },
 					alpha: number,
+					role: Role,
 				) => {
 					if (alpha < 0.03) return;
-					ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${alpha * 0.55})`;
-					ctx.lineWidth = 1;
+					const style = ROLE_STYLE[role];
+					ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${alpha * 0.6})`;
+					ctx.lineWidth = style.lineW * 0.7;
+					if (style.lineDash.length > 0) ctx.setLineDash(style.lineDash);
 					ctx.beginPath();
 					ctx.moveTo(from.x, from.y);
 					ctx.lineTo(to.x, to.y);
 					ctx.stroke();
+					if (style.lineDash.length > 0) ctx.setLineDash([]);
+					ctx.lineWidth = 1;
 					// Small tick at the node end so the line "lands".
 					ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha * 0.7})`;
 					ctx.beginPath();
@@ -379,17 +451,16 @@ export function NetworkVisualization({ className }: { className?: string }) {
 					ctx.fill();
 				};
 
-				line(slot.tl, projected[actors.user]!, la.tl);
-				// TR has three experts — draw a fan to all of them at reduced
-				// alpha so the eye reads "routing to multiple targets" without
-				// the lines being too heavy.
-				for (const expert of actors.experts) {
-					line(slot.tr, projected[expert]!, la.tr * 0.85);
+				line(slot.tl, projected[actors.user]!, la.tl, "user");
+				for (const responder of actors.responders) {
+					line(slot.tr, projected[responder]!, la.tr * 0.85, "responder");
 				}
-				line(slot.br, projected[actors.contributor]!, la.br);
-				// Payments fan out to BOTH the contributor and the host.
-				line(slot.bl, projected[actors.contributor]!, la.bl * 0.85);
-				line(slot.bl, projected[actors.host]!, la.bl * 0.85);
+				line(slot.br, projected[actors.contributor]!, la.br, "contributor");
+				// Payments fan out to BOTH the contributor (solid, normal) and
+				// the host (dashed, lighter) — distinguishes "data provider"
+				// from "compute provider" at a glance.
+				line(slot.bl, projected[actors.contributor]!, la.bl * 0.85, "contributor");
+				line(slot.bl, projected[actors.host]!, la.bl * 0.85, "host");
 			}
 
 			// Nodes + flash + sustained pulse + burst.
@@ -403,20 +474,36 @@ export function NetworkVisualization({ className }: { className?: string }) {
 				ctx.fill();
 
 				// Burst — an expanding ring + bright inner disk that fires the
-				// instant a beat starts. The whole effect is ~0.5s, sized so
-				// the user can't miss it in their peripheral vision while
-				// reading the label.
+				// instant a beat starts. Sized per role so each kind of event
+				// reads as a different "kind of thing":
+				//   user        — biggest, thick stroke (protagonist)
+				//   contributor — medium with a faint outer halo (knowledge source)
+				//   responder      — medium, plain
+				//   host        — smaller (background actor)
 				const burst = state.nodeBurst[i]!;
 				if (burst > 0.01) {
+					const role = roleOf(state.actors, i);
+					const style = role ? ROLE_STYLE[role] : ROLE_STYLE.responder;
 					const age = state.nodeBurstAge[i]!;
 					const phase = Math.min(1, age / 30);
-					const ringR = 6 + phase * 28;
-					const ringA = burst * (1 - phase) * 0.75;
+					const ringR = 6 + phase * (style.maxR - 6);
+					const ringA = burst * (1 - phase) * 0.8;
 					ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${ringA})`;
-					ctx.lineWidth = 1.5;
+					ctx.lineWidth = style.lineW;
 					ctx.beginPath();
 					ctx.arc(p.x, p.y, ringR, 0, Math.PI * 2);
 					ctx.stroke();
+					// Optional outer halo (contributor) — wider, fainter ring
+					// trailing the main one so the cited node has a unique
+					// "echo" silhouette.
+					if (style.halo) {
+						const haloR = ringR + 14;
+						ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${ringA * 0.35})`;
+						ctx.lineWidth = 1;
+						ctx.beginPath();
+						ctx.arc(p.x, p.y, haloR, 0, Math.PI * 2);
+						ctx.stroke();
+					}
 					ctx.lineWidth = 1;
 					ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${burst * (1 - phase * 0.5) * 0.6})`;
 					ctx.beginPath();
@@ -446,6 +533,31 @@ export function NetworkVisualization({ className }: { className?: string }) {
 					ctx.arc(p.x, p.y, 6 + breathe * 6, 0, Math.PI * 2);
 					ctx.fill();
 				}
+			}
+
+			// Persistent story traces — the cumulative path the story
+			// has walked. Each trace eases toward its target alpha each
+			// frame; story end sets target to 0 so they fade together
+			// instead of snapping off.
+			for (let k = state.traces.length - 1; k >= 0; k--) {
+				const tr = state.traces[k]!;
+				tr.alpha += (tr.target - tr.alpha) * 0.06;
+				if (tr.target === 0 && tr.alpha < 0.01) {
+					state.traces.splice(k, 1);
+					continue;
+				}
+				const a = projected[tr.from]!;
+				const b2 = projected[tr.to]!;
+				const depth = (a.z + b2.z) * 0.5;
+				const visible = tr.alpha * (0.5 + depth * 0.5);
+				if (visible < 0.01) continue;
+				ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${visible * 0.55})`;
+				ctx.lineWidth = 1.2;
+				ctx.beginPath();
+				ctx.moveTo(a.x, a.y);
+				ctx.lineTo(b2.x, b2.y);
+				ctx.stroke();
+				ctx.lineWidth = 1;
 			}
 
 			// Packets.
@@ -490,30 +602,14 @@ export function NetworkVisualization({ className }: { className?: string }) {
 				pkt.progress += pkt.speed;
 				if (pkt.progress >= 1) {
 					state.nodeFlash[pkt.to] = 1;
+					pkt.onArrive?.();
 					state.packets.splice(k, 1);
 				}
 			}
 
-			// Background ambient pulses between stories so the mesh isn't
-			// dead air. Rate is much lower than the story-driven activity.
-			if (!reduced) {
-				untilAmbient -= 1;
-				if (untilAmbient <= 0) {
-					const fromIdx = Math.floor(Math.random() * state.points.length);
-					const neighbors = state.adjacency[fromIdx]!;
-					if (neighbors.length > 0) {
-						const toIdx = neighbors[Math.floor(Math.random() * neighbors.length)]!;
-						state.packets.push({
-							from: fromIdx,
-							to: toIdx,
-							progress: 0,
-							speed: 0.015,
-							kind: "ambient",
-						});
-					}
-					untilAmbient = 150 + Math.floor(Math.random() * 120);
-				}
-			}
+			// (No ambient packets. Random pulses on unrelated nodes
+			// distracted from the story line; the mesh stays calm
+			// between stories instead.)
 
 			if (!reduced) state.rotation += ROTATION_SPEED;
 			raf = requestAnimationFrame(render);
@@ -541,9 +637,87 @@ export function NetworkVisualization({ className }: { className?: string }) {
 		function burst(state: State, nodeIdx: number) {
 			state.nodeBurst[nodeIdx] = 1;
 			state.nodeBurstAge[nodeIdx] = 0;
-			// Pair with a node flash so the source also looks "hot" instantly.
 			state.nodeFlash[nodeIdx] = Math.max(state.nodeFlash[nodeIdx]!, 0.9);
 		}
+
+		function resetLineAlphas(state: State) {
+			state.lineAlpha.tl = 0;
+			state.lineAlpha.tr = 0;
+			state.lineAlpha.br = 0;
+			state.lineAlpha.bl = 0;
+		}
+
+		/**
+		 * Punch the mesh first, THEN advance the step (which fades the
+		 * label + lines in). For beats with no traversal (the user is
+		 * the origin), this is the right entry point.
+		 */
+		async function punchThenLabel(state: State, nodes: number[], step: number) {
+			for (const n of nodes) burst(state, n);
+			await sleep(LABEL_DELAY_MS);
+			if (cancelled) return;
+			setCurrentStep(step);
+		}
+
+		/**
+		 * Send packets from origin → each target, wait until they ALL
+		 * arrive, THEN punch the targets and advance the step. Reading
+		 * order becomes: data travels → arrives with a punch → text +
+		 * connection line explain what just happened.
+		 *
+		 * The packet-arrival callback fires from inside the canvas raf
+		 * loop, so we wrap each push into a Promise resolved on arrival.
+		 */
+		async function traverseThenLabel(
+			state: State,
+			from: number,
+			targets: number[],
+			step: number,
+			kind: Kind = "query",
+			speed = 0.022,
+			traceRole: Role = "responder",
+		): Promise<void> {
+			const arrivals = targets.map((to) => {
+				// Push a persistent trace line that lights up to 1 as
+				// the packet travels. The trace lingers (target stays at
+				// 1) until the story resets — see resetTraces() at the
+				// bottom of playOnce.
+				state.traces.push({
+					from,
+					to,
+					role: traceRole,
+					alpha: 0,
+					target: 1,
+				});
+				return new Promise<void>((resolve) => {
+					state.packets.push({
+						from,
+						to,
+						progress: 0,
+						speed,
+						kind,
+						onArrive: resolve,
+					});
+				});
+			});
+			await Promise.all(arrivals);
+			if (cancelled) return;
+			for (const t of targets) burst(state, t);
+			await sleep(LABEL_DELAY_MS);
+			if (cancelled) return;
+			setCurrentStep(step);
+		}
+
+		function fadeTraces(state: State) {
+			for (const tr of state.traces) tr.target = 0;
+		}
+
+		/** Estimated packet travel + label delay so we can budget the
+		 * post-label dwell against the total step duration. ~750ms at
+		 * speed=0.022 + LABEL_DELAY_MS. */
+		const TRAVEL_BUDGET_MS = 750 + LABEL_DELAY_MS;
+		const BEAT_TAIL_MS = STEP_MS - LABEL_DELAY_MS;
+		const BEAT_TAIL_AFTER_TRAVEL_MS = Math.max(800, STEP_MS - TRAVEL_BUDGET_MS);
 
 		async function playOnce() {
 			const state = stateRef.current!;
@@ -552,17 +726,16 @@ export function NetworkVisualization({ className }: { className?: string }) {
 
 			const actors = pickActors(state);
 			state.actors = actors;
+			// Snap corner-label alphas + clear leftover traces so a new
+			// story doesn't render against the prior story's lines or
+			// inherit any fade-out residue.
+			resetLineAlphas(state);
+			state.traces = [];
 
 			// --- Beat 0 — ask ---
-			// Label TL fades in. Concurrently: burst on user node + sustained
-			// breathing pulse on the user for the whole beat. The burst is
-			// the visual "punch" the eye catches at the moment the label
-			// appears; the sustained pulse keeps the user node clearly
-			// identified as the "who" of the story.
 			setCurrentStory(story);
-			setCurrentStep(0);
-			burst(state, actors.user);
-			const sustainEnd0 = performance.now() + STEP_MS;
+			await punchThenLabel(state, [actors.user], 0);
+			const sustainEnd0 = performance.now() + BEAT_TAIL_MS;
 			const sustainTick = () => {
 				if (!stateRef.current || cancelled) return;
 				if (performance.now() > sustainEnd0) return;
@@ -570,81 +743,75 @@ export function NetworkVisualization({ className }: { className?: string }) {
 				window.setTimeout(sustainTick, 50);
 			};
 			sustainTick();
-			await sleep(STEP_MS);
+			await sleep(BEAT_TAIL_MS);
 
 			// --- Beat 1 — route ---
-			// Label TR fades in. Concurrently: bursts on all three expert
-			// nodes (the destinations the label names) AND fire the query
-			// packets so the bursts "preview" where the packets are heading.
-			setCurrentStep(1);
-			for (const expert of actors.experts) burst(state, expert);
-			for (const expert of actors.experts) {
-				state.packets.push({
-					from: actors.user,
-					to: expert,
-					progress: 0,
-					speed: 0.022,
-					kind: "query",
-				});
-			}
 			state.nodePulse[actors.user] = 0;
-			await sleep(STEP_MS);
+			await traverseThenLabel(
+				state,
+				actors.user,
+				actors.responders,
+				1,
+				"query",
+				0.022,
+				"responder",
+			);
+			await sleep(BEAT_TAIL_AFTER_TRAVEL_MS);
 
 			// --- Beat 2 — cite ---
-			// Label BR fades in. Burst on contributor (the cited person) so
-			// the eye is drawn to them; the citation packet flies expert →
-			// contributor as confirmation; ~1s later the response packet
-			// travels contributor → user, with a burst on user at that moment.
-			setCurrentStep(2);
 			const lookupExpert =
-				actors.experts[Math.floor(Math.random() * actors.experts.length)] ?? actors.user;
-			burst(state, actors.contributor);
-			state.packets.push({
-				from: lookupExpert,
-				to: actors.contributor,
-				progress: 0,
-				speed: 0.022,
-				kind: "query",
+				actors.responders[Math.floor(Math.random() * actors.responders.length)] ?? actors.user;
+			await traverseThenLabel(
+				state,
+				lookupExpert,
+				[actors.contributor],
+				2,
+				"query",
+				0.022,
+				"contributor",
+			);
+			// Answer travels back to the user as a separate trace +
+			// packet. The trace persists with the rest of the story so
+			// the round-trip path is visible.
+			state.traces.push({
+				from: actors.contributor,
+				to: actors.user,
+				role: "user",
+				alpha: 0,
+				target: 1,
 			});
-			window.setTimeout(() => {
-				if (!stateRef.current || cancelled) return;
-				burst(stateRef.current, actors.user);
-				stateRef.current.packets.push({
-					from: actors.contributor,
-					to: actors.user,
-					progress: 0,
-					speed: 0.02,
-					kind: "answer",
-				});
-			}, 1100);
-			await sleep(STEP_MS);
+			state.packets.push({
+				from: actors.contributor,
+				to: actors.user,
+				progress: 0,
+				speed: 0.02,
+				kind: "answer",
+				onArrive: () => {
+					if (stateRef.current) burst(stateRef.current, actors.user);
+				},
+			});
+			await sleep(BEAT_TAIL_AFTER_TRAVEL_MS);
 
 			// --- Beat 3 — settle ---
-			// Label BL fades in. Burst on BOTH contributor and host (they're
-			// the recipients of the payment); settle packets follow.
-			setCurrentStep(3);
-			burst(state, actors.contributor);
-			burst(state, actors.host);
-			state.packets.push({
-				from: actors.user,
-				to: actors.contributor,
-				progress: 0,
-				speed: 0.014,
-				kind: "settle",
-			});
-			state.packets.push({
-				from: actors.user,
-				to: actors.host,
-				progress: 0,
-				speed: 0.014,
-				kind: "settle",
-			});
-			await sleep(STEP_MS);
+			await traverseThenLabel(
+				state,
+				actors.user,
+				[actors.contributor, actors.host],
+				3,
+				"settle",
+				0.018,
+				"contributor",
+			);
+			await sleep(BEAT_TAIL_AFTER_TRAVEL_MS);
 
-			// Clear story state, brief gap, loop.
+			// Clear story, snap corner-label lines, fade the persistent
+			// traces (they ease to 0 over a few hundred ms inside the
+			// raf loop), then brief pause + loop.
 			setCurrentStory(null);
 			setCurrentStep(-1);
 			state.actors = null;
+			resetLineAlphas(state);
+			fadeTraces(state);
 			await sleep(GAP_MS);
 		}
 
@@ -680,24 +847,32 @@ function buildLabel(
 ): { slot: "tl" | "tr" | "br" | "bl"; text: string } | null {
 	switch (step) {
 		case 0:
+			// Beat 0 — question lands. The query enters the network at
+			// the user's node.
 			return {
 				slot: "tl",
 				text: `${story.user} ${story.question}`,
 			};
 		case 1:
+			// Beat 1 — the router partitions into a category. The visual
+			// ripple represents the routed slice of the corpus.
 			return {
 				slot: "tr",
-				text: `Routing to ${story.domain}`,
+				text: `Routes to the ${story.category} category`,
 			};
 		case 2:
+			// Beat 2 — retrieval pulls signed contributions from inside
+			// that partition.
 			return {
 				slot: "br",
-				text: `Pulling ${story.cited}`,
+				text: `Grounded by ${story.cited}`,
 			};
 		case 3:
+			// Beat 3 — the ledger fans payouts back to the contributor
+			// and the compute host that served the answer.
 			return {
 				slot: "bl",
-				text: `Paying ${story.contributor} and the node host`,
+				text: `Pays ${story.contributor} and the host that served it`,
 			};
 		default:
 			return null;

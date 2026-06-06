@@ -44,6 +44,9 @@ os.environ["DEQUORUM_DATABASE_URL"] = _TEST_DATABASE_URL
 # table makes "what's in the DB" explicit. Keep in sync with the Alembic
 # migration in dequorum/db/migrations/versions/.
 _USER_TABLES = (
+    "comments",
+    "chat_messages",
+    "chat_sessions",
     "votes",
     "contributions",
     "contribution_lineages",

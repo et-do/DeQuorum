@@ -37,9 +37,16 @@ services:
       retries: 10
 
   # --- Ollama LLM inference server --------------------------------------
+  # Uses the upstream image directly + a bind-mounted entrypoint so
+  # `compose up` doesn't trigger a docker build for a 4-line Dockerfile
+  # (which was pulling `ollama/ollama:latest` on every up and adding
+  # ~15min when the upstream :latest tag had moved). The Dockerfile at
+  # services/ollama/Dockerfile is retained as the production target —
+  # local dev pins a version here and bumps it explicitly.
   ollama:
-    build:
-      context: ./services/ollama
+    image: ollama/ollama:0.30.5
+    pull_policy: missing
+    entrypoint: ["/entrypoint.sh"]
     environment:
       # Keep this aligned with DEFAULT_BASE_MODEL_ID's ollama_tag in
       # services/app/src/dequorum/inference/models.py.
@@ -54,6 +61,11 @@ services:
       - "11434:11434"
     volumes:
       - ollama-models:/root/.ollama
+      # Bind-mount the entrypoint script — no build step needed; edits
+      # to the script take effect on next `compose up` without a
+      # rebuild. The :ro flag prevents accidental writes from inside
+      # the container.
+      - ./services/ollama/entrypoint.sh:/entrypoint.sh:ro
     # 30s interval is plenty — model bootstrap takes minutes, and the
     # smaller interval was generating ~360 healthcheck log lines per hour.
     healthcheck:

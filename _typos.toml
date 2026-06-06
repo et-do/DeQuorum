@@ -4,6 +4,9 @@
 [default.extend-words]
 # `nd` appears in big-O notation like `O(nd)`; typos would rewrite to "and".
 nd = "nd"
+# `BA` is the LaTeX rendering of matrix product B·A in the LoRA formalism
+# (W + BA). Typos wants to fix it to "BY" or "BE".
+BA = "BA"
 
 [files]
 # Archived notes and research markdown contain a lot of math notation,

@@ -19,20 +19,11 @@ from dequorum.db import (
     open_identity_store,
 )
 from dequorum.db.migrate import upgrade_to_head
-from dequorum.experts import ExpertRegistry
-from dequorum.experts.seeds import build_seed_registry
 from dequorum.identity.agreement import current_agreement
 from dequorum.identity.contributor import Contributor, Tier
-from dequorum.identity.seeds import (
-    populate as populate_seed_contributors,
-)
-from dequorum.identity.seeds import (
-    seed_contributor_for,
-)
+from dequorum.identity.seeds import populate as populate_seed_contributors
 from dequorum.identity.store import IdentityStore
 from dequorum.inference.base_model import MockBaseModel, OllamaBaseModel
-from dequorum.inference.composition import make_strategy
-from dequorum.inference.pipeline import Pipeline
 from dequorum.intake import DuplicateDetector, SubmissionPipeline
 from dequorum.knowledge.seeds import populate as populate_seed_contributions
 from dequorum.knowledge.store import (
@@ -40,16 +31,11 @@ from dequorum.knowledge.store import (
     VALID_STATUSES,
     ContributionStore,
 )
-from dequorum.retrieval import Retriever
 from dequorum.review.service import ReviewService
 from dequorum.routing import EmbeddingRouter, KeywordRouter
 from dequorum.routing.embedder import SentenceTransformerEmbedder
-from dequorum.taxonomy.seeds import (
-    EXPERT_DEFAULT_CATEGORY,
-)
-from dequorum.taxonomy.seeds import (
-    populate as populate_seed_categories,
-)
+from dequorum.taxonomy.category import Category
+from dequorum.taxonomy.seeds import populate as populate_seed_categories
 
 
 def _resolve_database_url(arg: str | None) -> str:
@@ -91,56 +77,21 @@ def _add_database_url_arg(p: argparse.ArgumentParser) -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="dequorum")
+    parser = argparse.ArgumentParser("dequorum")
     sub = parser.add_subparsers(dest="cmd", required=True)
-
-    query = sub.add_parser("query", help="Ask the expert network a question")
-    query.add_argument("text", help="The query text")
-    query.add_argument("--mock", action="store_true", help="Use mock model")
-    query.add_argument(
-        "--model",
-        default=None,
-        help="Model id from inference/models.py registry, or raw Ollama tag. "
-        "Defaults to inference.models.DEFAULT_BASE_MODEL_ID.",
-    )
-    query.add_argument("--host", default="http://localhost:11434", help="Ollama host")
-    query.add_argument("--top-k", type=int, default=2, help="Max experts to consult")
-    query.add_argument(
-        "--retrieve-top-k", type=int, default=3, help="Contributions per expert"
-    )
-    query.add_argument(
-        "--no-retrieve",
-        action="store_true",
-        help="Disable contribution retrieval (compare with Week 1 behavior)",
-    )
-    query.add_argument(
-        "--router",
-        choices=("keyword", "embedding"),
-        default="embedding",
-        help="Routing strategy. 'embedding' is semantic; 'keyword' is the baseline.",
-    )
-    query.add_argument(
-        "--min-score",
-        type=float,
-        default=None,
-        help="Override the router's min-score threshold for selecting an expert",
-    )
-    query.add_argument(
-        "--compose",
-        choices=("pick_best", "concat"),
-        default="pick_best",
-        help="How to combine N expert answers into the final response",
-    )
-    _add_database_url_arg(query)
 
     submit = sub.add_parser(
         "submit", help="Submit a signed contribution (pending review)"
     )
     submit.add_argument(
-        "--as",
-        dest="expert_id",
+        "--contributor",
         required=True,
-        help="Expert persona to publish under",
+        help="Contributor id (use `dequorum list-contributors`)",
+    )
+    submit.add_argument(
+        "--category",
+        required=True,
+        help="Primary category id (use `dequorum categories`)",
     )
     submit.add_argument("--text", required=True, help="The factual claim")
     submit.add_argument(
@@ -150,32 +101,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Citation URL (repeatable, HTTPS only)",
     )
     submit.add_argument(
-        "--category",
-        default=None,
-        help="Primary category id. Defaults to the expert's default category.",
-    )
-    submit.add_argument(
         "--block-on-duplicate",
         action="store_true",
-        help="Hard-fail submission if a likely duplicate exists "
-        "(default: surface and let you decide)",
+        help="Hard-fail submission if a likely duplicate exists",
     )
     _add_database_url_arg(submit)
 
     update = sub.add_parser(
-        "update", help="Submit a new version of an existing approved contribution"
+        "update", help="Submit a new version of an existing contribution"
     )
-    update.add_argument(
-        "--as",
-        dest="expert_id",
-        required=True,
-        help="Expert persona of the contributor making the update",
-    )
-    update.add_argument(
-        "--lineage",
-        required=True,
-        help="Lineage id to update (looks up the current version automatically)",
-    )
+    update.add_argument("--contributor", required=True)
+    update.add_argument("--lineage", required=True, help="Lineage id to update")
     update.add_argument("--text", required=True, help="The updated claim text")
     update.add_argument(
         "--cite", action="append", default=[], help="Citation URL (repeatable)"
@@ -210,7 +146,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_database_url_arg(list_contrib)
 
     vote = sub.add_parser("vote", help="Cast a signed vote on a contribution")
-    vote.add_argument("--as", dest="voter_id", required=True, help="Voter expert id")
+    vote.add_argument("--contributor", required=True, help="Voter contributor id")
     vote.add_argument(
         "--contribution", required=True, help="Contribution id (or prefix)"
     )
@@ -222,7 +158,7 @@ def _build_parser() -> argparse.ArgumentParser:
     list_c = sub.add_parser(
         "list-contributions", help="List stored contributions with status + tally"
     )
-    list_c.add_argument("--expert", default=None, help="Filter by expert id")
+    list_c.add_argument("--category", default=None, help="Filter by category id")
     list_c.add_argument(
         "--status",
         choices=sorted(VALID_STATUSES),
@@ -234,8 +170,6 @@ def _build_parser() -> argparse.ArgumentParser:
     review = sub.add_parser("review", help="Show pending contributions awaiting votes")
     _add_database_url_arg(review)
 
-    sub.add_parser("list-experts", help="Print the seed expert registry")
-
     serve = sub.add_parser("serve", help="Run the FastAPI web UI")
     serve.add_argument("--host", default="0.0.0.0", help="Bind host")
     serve.add_argument("--port", type=int, default=8000, help="Bind port")
@@ -245,18 +179,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--router", choices=("keyword", "embedding"), default="embedding"
     )
     serve.add_argument("--min-score", type=float, default=None)
-    serve.add_argument(
-        "--compose", choices=("pick_best", "concat"), default="pick_best"
-    )
     serve.add_argument("--reload", action="store_true", help="Auto-reload on edits")
 
     bench = sub.add_parser(
         "benchmark",
         help="Quality check: vanilla vs DeQuorum-full vs DeQuorum-no-retrieval",
     )
-    bench.add_argument(
-        "--mock", action="store_true", help="Use mock model (smoke test)"
-    )
+    bench.add_argument("--mock", action="store_true", help="Use mock model")
     bench.add_argument(
         "--model",
         default=None,
@@ -267,13 +196,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--router", choices=("keyword", "embedding"), default="embedding"
     )
     bench.add_argument("--min-score", type=float, default=None)
-    bench.add_argument("--top-k", type=int, default=2)
     bench.add_argument("--retrieve-top-k", type=int, default=3)
     _add_database_url_arg(bench)
     bench.add_argument(
         "--output",
         default="docs/benchmarks/report.md",
-        help="Where to write the Markdown report (parent dir is auto-created)",
+        help="Where to write the Markdown report",
     )
     bench.add_argument(
         "--limit",
@@ -281,6 +209,30 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Run only the first N questions (smoke testing)",
     )
+
+    routebench = sub.add_parser(
+        "routebench",
+        help="Fast routing-only benchmark (no Ollama). Scales to N=100s.",
+    )
+    routebench.add_argument(
+        "--router", choices=("keyword", "embedding"), default="embedding"
+    )
+    routebench.add_argument("--min-score", type=float, default=None)
+    routebench.add_argument(
+        "--per-category",
+        type=int,
+        default=12,
+        help="Template-generated questions per category (default: 12)",
+    )
+    routebench.add_argument(
+        "--seed", type=int, default=42, help="Generator seed for reproducibility"
+    )
+    routebench.add_argument(
+        "--output",
+        default="docs/benchmarks/routebench.md",
+        help="Where to write the Markdown report",
+    )
+    _add_database_url_arg(routebench)
 
     db = sub.add_parser("db", help="Database management commands")
     db_sub = db.add_subparsers(dest="db_cmd", required=True)
@@ -305,118 +257,54 @@ def _resolve_contribution_id(store: ContributionStore, prefix: str) -> str | Non
 
 
 def _build_router(
-    registry: ExpertRegistry, kind: str, min_score: float | None
+    categories: Sequence[Category], kind: str, min_score: float | None
 ) -> EmbeddingRouter | KeywordRouter:
     if kind == "embedding":
         embedder = SentenceTransformerEmbedder()
-        threshold = 0.18 if min_score is None else min_score
-        # Keyword router as a deterministic safety net: catches obvious matches
-        # where embedding similarity dipped below the threshold for a relevant expert.
-        fallback = KeywordRouter(registry, fallback_to_all=False, min_score=1.0)
+        threshold = 0.30 if min_score is None else min_score
+        fallback = KeywordRouter(categories, fallback_to_all=False, min_score=1.0)
         return EmbeddingRouter(
-            registry, embedder, min_score=threshold, fallback=fallback
+            categories, embedder, min_score=threshold, fallback=fallback
         )
     threshold = 1.0 if min_score is None else min_score
-    return KeywordRouter(registry, min_score=threshold)
+    return KeywordRouter(categories, min_score=threshold)
 
 
-def _cmd_query(args: argparse.Namespace) -> int:
-    _bootstrap(args)
-    _ensure_seeded()
-    registry = build_seed_registry()
-    router = _build_router(registry, args.router, args.min_score)
-    model: MockBaseModel | OllamaBaseModel = (
-        MockBaseModel()
-        if args.mock
-        else OllamaBaseModel(model=args.model or "", host=args.host)
-    )
-
-    if args.no_retrieve:
-        pipeline = Pipeline(
-            router=router,
-            model=model,
-            retriever=None,
-            composition=make_strategy(args.compose),
-            top_k=args.top_k,
-            retrieve_top_k=args.retrieve_top_k,
-        )
-        try:
-            response = pipeline.query(args.text)
-        except CompositionError as exc:
-            print(json.dumps({"error": str(exc)}, indent=2))
-            return 1
-    else:
-        with open_contribution_store() as store:
-            pipeline = Pipeline(
-                router=router,
-                model=model,
-                retriever=Retriever(store),
-                composition=make_strategy(args.compose),
-                top_k=args.top_k,
-                retrieve_top_k=args.retrieve_top_k,
-            )
-            try:
-                response = pipeline.query(args.text)
-            except CompositionError as exc:
-                print(json.dumps({"error": str(exc)}, indent=2))
-                return 1
-
-    payload = {
-        "query": response.query,
-        "routing": {
-            "method": response.routing.method,
-            "matched_tags": list(response.routing.matched_tags),
-            "fallback_used": response.routing.fallback_used,
-            "threshold": response.routing.threshold,
-            "selected": [
-                {"expert_id": s.expert.expert_id, "score": round(s.score, 4)}
-                for s in response.routing.selected
-            ],
-        },
-        "experts": [
-            {
-                "expert_id": a.expert.expert_id,
-                "routing_score": round(a.routing_score, 4),
-                "answer": a.answer,
-                "signature": asdict(a.signature),
-                "retrieved": [
-                    {
-                        "contribution_id": sc.contribution.contribution_id,
-                        "contributor_id": sc.contribution.contributor_id,
-                        "score": round(sc.score, 4),
-                        "text": sc.contribution.text,
-                        "citations": list(sc.contribution.citations),
-                    }
-                    for sc in a.retrieved
-                ],
-            }
-            for a in response.expert_answers
-        ],
-        "composition": {
-            "strategy": response.composition.strategy,
-            "chosen": list(response.composition.chosen),
-        },
-        "final_answer": response.final_answer,
-        "ledger": pipeline.ledger.totals(),
-    }
-    print(json.dumps(payload, indent=2))
-    return 0
+def _load_contributor(contributor_id: str) -> Contributor | None:
+    with open_identity_store() as store:
+        for c in store.list_all():
+            if c.contributor_id == contributor_id:
+                return c
+    return None
 
 
 def _cmd_submit(args: argparse.Namespace) -> int:
     url = _bootstrap(args)
     _ensure_seeded()
-    registry = build_seed_registry()
-    try:
-        expert = registry.get(args.expert_id)
-    except KeyError as exc:
-        print(json.dumps({"error": str(exc)}, indent=2))
-        return 1
 
-    contributor, contributor_key = seed_contributor_for(expert.expert_id)
-    category = args.category or EXPERT_DEFAULT_CATEGORY.get(
-        expert.expert_id, "uncategorized"
-    )
+    contributor = _load_contributor(args.contributor)
+    if contributor is None:
+        print(
+            json.dumps(
+                {"error": f"unknown contributor: {args.contributor!r}"}, indent=2
+            )
+        )
+        return 1
+    # Dev path: seed contributors carry a derivable signing key. Real
+    # signups pass the key in over a separate channel; we don't try to
+    # cover that here.
+    from dequorum.identity.seeds import seed_contributor_for
+
+    leaf = args.category.rsplit("/", 1)[-1]
+    try:
+        _, signing_key = seed_contributor_for(leaf)
+    except Exception:
+        print(
+            json.dumps(
+                {"error": "no signing key derivable for this contributor"}, indent=2
+            )
+        )
+        return 1
 
     embedder = SentenceTransformerEmbedder()
     with (
@@ -432,11 +320,10 @@ def _cmd_submit(args: argparse.Namespace) -> int:
         try:
             result = pipeline.submit(
                 contributor=contributor,
-                contributor_signing_key=contributor_key,
-                expert_id=expert.expert_id,
+                contributor_signing_key=signing_key,
                 text=args.text,
                 citations=tuple(args.cite),
-                primary_category_id=category,
+                primary_category_id=args.category,
             )
         except CompositionError as exc:
             print(json.dumps({"error": str(exc)}, indent=2))
@@ -450,7 +337,6 @@ def _cmd_submit(args: argparse.Namespace) -> int:
                 "contribution_id": contribution.contribution_id,
                 "lineage_id": contribution.lineage_id,
                 "version_number": contribution.version_number,
-                "expert_id": contribution.expert_id,
                 "contributor_id": contribution.contributor_id,
                 "primary_category_id": contribution.primary_category_id,
                 "status": STATUS_PENDING,
@@ -480,14 +366,15 @@ def _cmd_submit(args: argparse.Namespace) -> int:
 def _cmd_update(args: argparse.Namespace) -> int:
     url = _bootstrap(args)
     _ensure_seeded()
-    registry = build_seed_registry()
-    try:
-        expert = registry.get(args.expert_id)
-    except KeyError as exc:
-        print(json.dumps({"error": str(exc)}, indent=2))
-        return 1
 
-    contributor, contributor_key = seed_contributor_for(expert.expert_id)
+    contributor = _load_contributor(args.contributor)
+    if contributor is None:
+        print(
+            json.dumps(
+                {"error": f"unknown contributor: {args.contributor!r}"}, indent=2
+            )
+        )
+        return 1
 
     with (
         open_contribution_store() as store,
@@ -495,7 +382,6 @@ def _cmd_update(args: argparse.Namespace) -> int:
     ):
         current_contribution = store.current_for_lineage(args.lineage)
         if current_contribution is None:
-            # Fall back: latest version of the lineage (covers pending lineages too)
             existing = store.list_for_lineage(args.lineage)
             if not existing:
                 print(
@@ -505,16 +391,29 @@ def _cmd_update(args: argparse.Namespace) -> int:
             current_contribution = existing[-1]
 
         category = args.category or current_contribution.primary_category_id
+
+        from dequorum.identity.seeds import seed_contributor_for
+
+        leaf = category.rsplit("/", 1)[-1]
+        try:
+            _, signing_key = seed_contributor_for(leaf)
+        except Exception:
+            print(
+                json.dumps(
+                    {"error": "no signing key derivable for this contributor"}, indent=2
+                )
+            )
+            return 1
+
         pipeline = SubmissionPipeline(
             contribution_store=store,
             category_store=cat_store,
-            duplicate_detector=None,  # updates skip dedup by design
+            duplicate_detector=None,
         )
         try:
             result = pipeline.submit(
                 contributor=contributor,
-                contributor_signing_key=contributor_key,
-                expert_id=expert.expert_id,
+                contributor_signing_key=signing_key,
                 text=args.text,
                 citations=tuple(args.cite),
                 primary_category_id=category,
@@ -532,7 +431,6 @@ def _cmd_update(args: argparse.Namespace) -> int:
                 "lineage_id": contribution.lineage_id,
                 "version_number": contribution.version_number,
                 "parent_version": contribution.parent_version,
-                "expert_id": contribution.expert_id,
                 "contributor_id": contribution.contributor_id,
                 "status": STATUS_PENDING,
                 "database_url": url,
@@ -587,13 +485,11 @@ def _cmd_signup(args: argparse.Namespace) -> int:
                 "agreement_version": contributor.agreement_version,
                 "vote_weight": contributor.vote_weight,
                 "daily_submission_cap": contributor.daily_submission_cap,
-                "private_key_hex": priv.hex(),  # dev only; real signups never expose this
+                "private_key_hex": priv.hex(),
                 "public_key_hex": contributor.public_key.hex(),
                 "store_total": total,
                 "warning": (
-                    "Save private_key_hex SECURELY. The network cannot recover it. "
-                    "Real signups use client-side WebCrypto and never transmit the "
-                    "private key over the wire."
+                    "Save private_key_hex SECURELY. The network cannot recover it."
                 ),
             },
             indent=2,
@@ -613,6 +509,7 @@ def _cmd_list_categories(args: argparse.Namespace) -> int:
                 "display_name": c.display_name,
                 "depth": c.depth,
                 "description": c.description,
+                "is_routable": c.is_routable,
             }
             for c in store.all()
         ]
@@ -643,12 +540,6 @@ def _cmd_list_contributors(args: argparse.Namespace) -> int:
 def _cmd_vote(args: argparse.Namespace) -> int:
     _bootstrap(args)
     _ensure_seeded()
-    registry = build_seed_registry()
-    if args.voter_id not in registry:
-        print(
-            json.dumps({"error": f"unknown voter expert: {args.voter_id!r}"}, indent=2)
-        )
-        return 1
 
     with open_contribution_store() as store:
         try:
@@ -665,10 +556,10 @@ def _cmd_vote(args: argparse.Namespace) -> int:
             )
             return 1
 
-        service = ReviewService(store, registry=registry)
+        service = ReviewService(store)
         try:
             outcome = service.cast_vote(
-                contribution_id=cid, voter_id=args.voter_id, score=args.score
+                contribution_id=cid, voter_id=args.contributor, score=args.score
             )
         except CompositionError as exc:
             print(json.dumps({"error": str(exc)}, indent=2))
@@ -682,8 +573,8 @@ def _cmd_list_contributions(args: argparse.Namespace) -> int:
     _bootstrap(args)
     _ensure_seeded()
     with open_contribution_store() as store:
-        if args.expert:
-            contribs = store.list_for_expert(args.expert, status=args.status)
+        if args.category:
+            contribs = store.list_by_category(args.category, status=args.status)
         elif args.status:
             contribs = store.list_by_status(args.status)
         else:
@@ -691,7 +582,7 @@ def _cmd_list_contributions(args: argparse.Namespace) -> int:
         payload = [
             {
                 "contribution_id": c.contribution_id,
-                "expert_id": c.expert_id,
+                "primary_category_id": c.primary_category_id,
                 "contributor_id": c.contributor_id,
                 "status": store.get_status(c.contribution_id),
                 "tally": store.vote_tally(c.contribution_id),
@@ -712,7 +603,7 @@ def _cmd_review(args: argparse.Namespace) -> int:
         payload = [
             {
                 "contribution_id": c.contribution_id,
-                "expert_id": c.expert_id,
+                "primary_category_id": c.primary_category_id,
                 "contributor_id": c.contributor_id,
                 "tally": store.vote_tally(c.contribution_id),
                 "text": c.text,
@@ -728,21 +619,6 @@ def _cmd_review(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_list_experts(_: argparse.Namespace) -> int:
-    registry = build_seed_registry()
-    payload = [
-        {
-            "expert_id": e.expert_id,
-            "display_name": e.display_name,
-            "specialty_tags": list(e.specialty_tags),
-            "prompt_digest": e.prompt_digest,
-        }
-        for e in registry.all()
-    ]
-    print(json.dumps(payload, indent=2))
-    return 0
-
-
 def _cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -754,7 +630,6 @@ def _cmd_serve(args: argparse.Namespace) -> int:
         use_mock=args.mock,
         router=args.router,
         min_score=args.min_score,
-        composition=args.compose,
     )
     app = create_app()
     uvicorn.run(app, host=args.host, port=args.port, reload=args.reload)
@@ -768,10 +643,11 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
     from dequorum.benchmark import SEED_QUESTIONS, run_benchmark
     from dequorum.benchmark.runner import write_markdown_report
 
-    registry = build_seed_registry()
+    with open_category_store() as cs:
+        categories = tuple(cs.routable())
 
-    def router_factory(reg: ExpertRegistry) -> object:
-        return _build_router(reg, args.router, args.min_score)
+    def router_factory(cats: Sequence[Category]) -> object:
+        return _build_router(cats, args.router, args.min_score)
 
     model: MockBaseModel | OllamaBaseModel = (
         MockBaseModel()
@@ -796,10 +672,9 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
         report = run_benchmark(
             questions=questions,
             model=model,
-            registry=registry,
+            categories=categories,
             store=store,
             router_factory=router_factory,
-            top_k=args.top_k,
             retrieve_top_k=args.retrieve_top_k,
             model_label=model_label,
             progress=progress,
@@ -809,7 +684,51 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_markdown_report(report, output_path)
     print(f"\nReport written: {output_path}")
-    print("Open it side-by-side with the spec and rate the answers honestly.")
+    return 0
+
+
+def _cmd_routebench(args: argparse.Namespace) -> int:
+    """Fast routing-only benchmark — no Ollama, scales to N=100s."""
+    _bootstrap(args)
+    _ensure_seeded()
+
+    from dequorum.benchmark.expanded import build_expanded_question_set
+    from dequorum.benchmark.routing_only import (
+        run_routing_benchmark,
+    )
+    from dequorum.benchmark.routing_only import (
+        write_markdown_report as write_routebench_report,
+    )
+
+    with open_category_store() as cs:
+        categories = tuple(cs.routable())
+
+    router = _build_router(categories, args.router, args.min_score)
+    category_tags = {c.category_id: c.specialty_tags for c in categories}
+    questions = build_expanded_question_set(
+        category_tags, seed=args.seed, per_category=args.per_category
+    )
+    print(
+        f"Running routebench: {len(questions)} questions, "
+        f"router={args.router}, min_score={args.min_score}"
+    )
+    report = run_routing_benchmark(questions, router=router)
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    router_label = type(router).__name__
+    write_routebench_report(
+        report,
+        output_path,
+        router_label=router_label,
+        routable_category_ids=tuple(c.category_id for c in categories),
+    )
+    print(f"\nReport written: {output_path}\n")
+    print(f"{'BUCKET':<28} {'N':>4} {'ACCEPT':>8} {'MEAN':>6}")
+    for bucket in sorted(report.by_bucket):
+        s = report.by_bucket[bucket]
+        mean = f"{s.mean_score:.2f}" if s.mean_score is not None else "—"
+        print(f"{bucket:<28} {s.n:>4} {s.accept_rate * 100:>6.0f}%  {mean:>6}")
     return 0
 
 
@@ -834,15 +753,12 @@ def _cmd_db(args: argparse.Namespace) -> int:
     return 2
 
 
-# Suppress an unused-import warning: IdentityStore is re-exported for tests
-# and external CLI scripts that import from dequorum.cli.
+# Re-exported for tests / external scripts that import from dequorum.cli.
 _ = IdentityStore
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    if args.cmd == "query":
-        return _cmd_query(args)
     if args.cmd == "submit":
         return _cmd_submit(args)
     if args.cmd == "update":
@@ -859,12 +775,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_list_contributions(args)
     if args.cmd == "review":
         return _cmd_review(args)
-    if args.cmd == "list-experts":
-        return _cmd_list_experts(args)
     if args.cmd == "serve":
         return _cmd_serve(args)
     if args.cmd == "benchmark":
         return _cmd_benchmark(args)
+    if args.cmd == "routebench":
+        return _cmd_routebench(args)
     if args.cmd == "db":
         return _cmd_db(args)
     return 2

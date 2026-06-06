@@ -11,15 +11,15 @@ function AboutPage() {
 			<h1 className="text-3xl font-bold tracking-tight sm:text-4xl">About</h1>
 
 			<p className="text-fg-muted">
-				DeQuorum is a small AI network you can run yourself. Contributors publish knowledge under a
-				signed identity. Reviewers vote on what holds up. Node hosters provide inference. End users
-				ask questions and see who their answer came from.
+				DeQuorum is a crowdsourced AI platform owned by the people who make it work. Contributors
+				publish the knowledge. Reviewers decide what holds up. Node hosters provide the compute. End
+				users ask questions. Every role earns when the network is used.
 			</p>
 
 			<p className="text-fg-muted">
-				It's Apache-2.0 and the reference deployment is one person on nights and weekends. The goal
-				isn't to replace any of the frontier APIs. It's to make a usable shape for AI infrastructure
-				where the people whose work goes in are visible — and paid — at the other end.
+				No BigTech, no closed model, no rent extraction. The network is the commons. Identity,
+				signatures, and payouts are public and auditable end-to-end. If your knowledge or your
+				hardware powers an answer, you get credit and you get paid.
 			</p>
 		</Container>
 	);

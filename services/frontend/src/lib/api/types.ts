@@ -14,14 +14,6 @@ export interface Signature {
 	digest: string;
 }
 
-export interface Expert {
-	expert_id: string;
-	display_name: string;
-	specialty_tags: string[];
-	prompt_digest: string;
-	example_questions: string[];
-}
-
 export interface Vote {
 	vote_id: string;
 	contribution_id: string;
@@ -35,7 +27,6 @@ export interface Contribution {
 	lineage_id: string;
 	version_number: number;
 	parent_version: number | null;
-	expert_id: string;
 	contributor_id: string;
 	primary_category_id: string;
 	text: string;
@@ -83,17 +74,15 @@ export interface ContributorDetail extends Contributor {
 	contributions: Contribution[];
 }
 
-export interface NewContributorResponse extends Contributor {
-	private_key_hex: string;
-	warning: string;
-}
-
 export interface Category {
 	category_id: string;
 	parent_id: string | null;
 	display_name: string;
 	depth: number;
 	description: string;
+	is_routable: boolean;
+	specialty_tags: string[];
+	example_questions: string[];
 }
 
 export interface LineageDetail {
@@ -124,37 +113,83 @@ export interface AgreementInfo {
 	tiers: { value: number; name: string }[];
 }
 
-export interface QueryResponse {
+/**
+ * Minimal envelope persisted alongside each chat response. The backend
+ * records which category grounded the answer and which contributions
+ * (if any) were retrieved, for the attribution ledger. The user-facing
+ * UI does not surface this — see /docs/architecture/whitepaper.md.
+ */
+export interface ChatResponseEnvelope {
 	query: string;
-	routing: {
-		method: string;
-		matched_tags: string[];
-		fallback_used: boolean;
-		threshold: number;
-		selected: { expert_id: string; score: number }[];
-	};
-	experts: {
-		expert_id: string;
-		routing_score: number;
-		answer: string;
-		signature: Signature;
-		retrieved: {
-			contribution_id: string;
-			contributor_id: string;
-			score: number;
-			text: string;
-			citations: string[];
-		}[];
-	}[];
-	composition: { strategy: string; chosen: string[] };
+	category_id: string | null;
+	retrieved_contribution_ids: string[];
 	final_answer: string;
-	ledger: Record<string, number>;
 }
 
 export interface ContributionsQuery {
-	expert?: string;
 	status?: Status;
 	contributor?: string;
 	category?: string;
 	q?: string;
 }
+
+// --- chat sessions ---
+
+export type ChatRole = "user" | "network";
+
+export interface ChatSession {
+	session_id: string;
+	contributor_id: string;
+	title: string;
+	created_at: number;
+	updated_at: number;
+}
+
+export interface ChatMessage {
+	message_id: string;
+	session_id: string;
+	role: ChatRole;
+	content: string;
+	response: ChatResponseEnvelope | null;
+	created_at: number;
+	sequence_number: number;
+}
+
+export interface ChatSessionDetail extends ChatSession {
+	messages: ChatMessage[];
+}
+
+// --- comments on contributions ---
+
+export interface LineAnchor {
+	start_line: number;
+	end_line: number;
+}
+
+export interface Comment {
+	comment_id: string;
+	contribution_id: string;
+	parent_comment_id: string | null;
+	author_id: string;
+	body: string;
+	line_anchor: LineAnchor | null;
+	created_at: number;
+	redacted_at: number | null;
+	redacted_by: string | null;
+	replaces_comment_id: string | null;
+	signature: Signature;
+}
+
+export interface CreateCommentPayload {
+	body: string;
+	parent_comment_id?: string | null;
+	line_anchor?: LineAnchor | null;
+	replaces_comment_id?: string | null;
+}
+
+export type ChatStreamEvent =
+	| { stage: string }
+	| { chunk: string }
+	| { done: ChatResponseEnvelope }
+	| { title: string }
+	| { error: string };

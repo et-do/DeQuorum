@@ -63,7 +63,6 @@ class SubmissionPipeline:
         *,
         contributor: Contributor,
         contributor_signing_key: bytes,
-        expert_id: str,
         text: str,
         citations: tuple[str, ...],
         primary_category_id: str,
@@ -100,11 +99,9 @@ class SubmissionPipeline:
                 text=text,
                 citations=citations,
                 primary_category_id=primary_category_id,
-                expert_id=expert_id,
             )
         else:
             contribution = Contribution.create(
-                expert_id=expert_id,
                 contributor_id=contributor.contributor_id,
                 primary_category_id=primary_category_id,
                 text=text,
@@ -124,7 +121,6 @@ class SubmissionPipeline:
         text: str,
         citations: tuple[str, ...],
         primary_category_id: str,
-        expert_id: str,
     ) -> Contribution:
         # Use the highest existing version (current or not) as the parent.
         # This handles the case where the current is approved and an in-flight
@@ -133,7 +129,6 @@ class SubmissionPipeline:
         if latest == 0:
             raise SubmissionError(f"unknown lineage: {lineage_id!r}")
         return Contribution.create(
-            expert_id=expert_id,
             contributor_id=contributor.contributor_id,
             primary_category_id=primary_category_id,
             text=text,

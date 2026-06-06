@@ -1,22 +1,28 @@
-"""Seed contributions: verified factual claims attached to each seed expert.
+"""Seed contributions: verified factual claims attached to each seed category.
 
-These exist so a fresh checkout has something to retrieve from immediately.
-In production, real contributors submit these themselves via the `submit` CLI.
+These exist so a fresh checkout has something to retrieve from
+immediately. In production, real contributors submit these themselves
+via the `submit` CLI.
+
+Signing keys are derived deterministically from the category id so the
+seed contributions are reproducible. The matching seed contributor is
+looked up via `contributor_id_for(category_id)`.
 """
 
 from __future__ import annotations
 
-from dequorum.experts.seeds import (
-    HTTP_PROTOCOL,
-    PYTHON_ASYNC,
-    PYTHON_PACKAGING,
-    PYTHON_TYPING,
-    RUST_OWNERSHIP,
-)
 from dequorum.knowledge.contribution import Contribution
 from dequorum.knowledge.store import STATUS_APPROVED, ContributionStore
 
-# Each tuple: (text, citations). For seed data, contributor_id == expert_id.
+
+def _seed_key(category_id: str) -> bytes:
+    # Matches the slug used by `dequorum/identity/seeds.py` to derive
+    # the corresponding seed contributor.
+    slug = category_id.rsplit("/", 1)[-1]
+    return f"dev-seed-key-{slug}".encode()
+
+
+# Each tuple: (text, citations).
 
 _PYTHON_TYPING_FACTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
@@ -170,24 +176,31 @@ _HTTP_FACTS: tuple[tuple[str, tuple[str, ...]], ...] = (
 )
 
 
+# (category_id, seed_contributor_slug, facts) triples. The contributor
+# slug is the stable identifier used by `contributor_id_for(...)` to
+# resolve to a deterministic seed Contributor — keep these aligned
+# with SEED_CONTRIBUTOR_SLUGS in `identity/seeds.py`.
+_SEED_FACTS: tuple[tuple[str, str, tuple[tuple[str, tuple[str, ...]], ...]], ...] = (
+    ("programming/python/typing", "python-typing", _PYTHON_TYPING_FACTS),
+    ("programming/python/async", "python-async", _PYTHON_ASYNC_FACTS),
+    ("programming/python/packaging", "python-packaging", _PYTHON_PACKAGING_FACTS),
+    ("programming/rust/ownership", "rust-ownership", _RUST_OWNERSHIP_FACTS),
+    ("web-and-protocols/http", "http-protocol", _HTTP_FACTS),
+)
+
+
 def _build_contributions(
-    expert_id: str,
-    signing_key: bytes,
+    category_id: str,
+    contributor_slug: str,
     facts: tuple[tuple[str, tuple[str, ...]], ...],
 ) -> list[Contribution]:
-    """Build contributions for a seed expert.
-
-    contributor_id is derived from the matching seed Contributor (one per expert
-    persona), and primary_category_id is looked up from EXPERT_DEFAULT_CATEGORY.
-    """
+    """Build contributions filed under one seed category."""
     from dequorum.identity.seeds import contributor_id_for
-    from dequorum.taxonomy.seeds import EXPERT_DEFAULT_CATEGORY
 
-    contributor_id = contributor_id_for(expert_id)
-    category_id = EXPERT_DEFAULT_CATEGORY.get(expert_id, "uncategorized")
+    contributor_id = contributor_id_for(contributor_slug)
+    signing_key = _seed_key(category_id)
     return [
         Contribution.create(
-            expert_id=expert_id,
             contributor_id=contributor_id,
             primary_category_id=category_id,
             text=text,
@@ -199,35 +212,11 @@ def _build_contributions(
 
 
 def seed_contributions() -> list[Contribution]:
-    """Return the full list of seed contributions across all seed experts."""
+    """Return the full list of seed contributions across all routable
+    seed categories."""
     out: list[Contribution] = []
-    out.extend(
-        _build_contributions(
-            PYTHON_TYPING.expert_id, PYTHON_TYPING.signing_key, _PYTHON_TYPING_FACTS
-        )
-    )
-    out.extend(
-        _build_contributions(
-            PYTHON_ASYNC.expert_id, PYTHON_ASYNC.signing_key, _PYTHON_ASYNC_FACTS
-        )
-    )
-    out.extend(
-        _build_contributions(
-            PYTHON_PACKAGING.expert_id,
-            PYTHON_PACKAGING.signing_key,
-            _PYTHON_PACKAGING_FACTS,
-        )
-    )
-    out.extend(
-        _build_contributions(
-            RUST_OWNERSHIP.expert_id, RUST_OWNERSHIP.signing_key, _RUST_OWNERSHIP_FACTS
-        )
-    )
-    out.extend(
-        _build_contributions(
-            HTTP_PROTOCOL.expert_id, HTTP_PROTOCOL.signing_key, _HTTP_FACTS
-        )
-    )
+    for category_id, contributor_slug, facts in _SEED_FACTS:
+        out.extend(_build_contributions(category_id, contributor_slug, facts))
     return out
 
 

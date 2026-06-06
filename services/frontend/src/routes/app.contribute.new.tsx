@@ -4,7 +4,7 @@ import { type FormEvent, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { listExperts, submitContribution } from "@/lib/api";
+import { listCategories, submitContribution } from "@/lib/api";
 import { useToasts } from "@/lib/toasts";
 
 export const Route = createFileRoute("/app/contribute/new")({
@@ -14,10 +14,11 @@ export const Route = createFileRoute("/app/contribute/new")({
 function NewSubmission() {
 	const navigate = useNavigate();
 	const { toast } = useToasts();
-	const experts = useQuery({ queryKey: ["experts"], queryFn: listExperts });
-	const [expertId, setExpertId] = useState("");
+	const categories = useQuery({ queryKey: ["categories"], queryFn: listCategories });
+	const [categoryId, setCategoryId] = useState("");
 	const [text, setText] = useState("");
 	const [citations, setCitations] = useState("");
+	const [sourceUrl, setSourceUrl] = useState("");
 
 	const mutation = useMutation({
 		mutationFn: submitContribution,
@@ -33,38 +34,59 @@ function NewSubmission() {
 
 	function onSubmit(e: FormEvent<HTMLFormElement>) {
 		e.preventDefault();
-		if (!expertId || !text.trim()) return;
+		if (!categoryId || !text.trim()) return;
+		// Stopgap: a `Source URL` field is folded into the citation list as
+		// the leading entry, so v0.1 contributions filed from a larger
+		// document still carry a back-reference. When the bulk-ingestion
+		// flow lands (v0.2 — see docs/architecture/contribution-sources.md)
+		// these get migrated into proper `documents` rows.
+		const cites = citations
+			.split(/\r?\n/)
+			.map((c) => c.trim())
+			.filter(Boolean);
+		const allCitations = sourceUrl.trim() ? [sourceUrl.trim(), ...cites] : cites;
 		mutation.mutate({
-			expert_id: expertId,
+			primary_category_id: categoryId,
 			text: text.trim(),
-			citations: citations
-				.split(/\r?\n/)
-				.map((c) => c.trim())
-				.filter(Boolean),
+			citations: allCitations,
 		});
 	}
+
+	// Only leaf categories with a curated persona accept new contributions
+	// — those are the ones the router can target. Organizational parent
+	// nodes are excluded from the picker.
+	const routableCategories = categories.data?.filter((c) => c.is_routable) ?? [];
 
 	return (
 		<div className="mx-auto max-w-3xl space-y-8">
 			<PageHeader
 				title="New submission"
-				description="Tie a signed claim to one of the seed experts. Reviewers will vote."
+				description="File a signed claim under a curated category. Reviewers will vote."
 			/>
+
+			<div className="rounded-md border border-border bg-bg-muted/50 p-3 text-xs text-fg-muted">
+				<strong className="font-bold text-fg">Bulk submission</strong> — ingesting a documentation
+				site, paper, or repo and extracting multiple claims at once is on the v0.2 milestone. Today
+				you can submit one claim at a time; add the source URL below so it back-links to wherever
+				the claim came from.
+			</div>
 
 			<form onSubmit={onSubmit}>
 				<Card className="space-y-5">
 					<div>
-						<label className="block text-xs uppercase tracking-widest text-fg-subtle">Expert</label>
+						<label className="block text-xs uppercase tracking-widest text-fg-subtle">
+							Category
+						</label>
 						<select
-							value={expertId}
-							onChange={(e) => setExpertId(e.target.value)}
+							value={categoryId}
+							onChange={(e) => setCategoryId(e.target.value)}
 							required
 							className="mt-1 w-full border border-border bg-bg px-3 py-2 text-fg focus:border-border-strong focus:outline-none"
 						>
 							<option value="">— select —</option>
-							{experts.data?.map((e) => (
-								<option key={e.expert_id} value={e.expert_id}>
-									{e.expert_id} — {e.display_name}
+							{routableCategories.map((c) => (
+								<option key={c.category_id} value={c.category_id}>
+									{c.display_name}
 								</option>
 							))}
 						</select>
@@ -85,7 +107,23 @@ function NewSubmission() {
 
 					<div>
 						<label className="block text-xs uppercase tracking-widest text-fg-subtle">
-							Citations (one per line, https only)
+							Source URL (optional)
+						</label>
+						<input
+							type="url"
+							value={sourceUrl}
+							onChange={(e) => setSourceUrl(e.target.value)}
+							placeholder="https:// — where this claim came from"
+							className="mt-1 w-full border border-border bg-bg px-3 py-2 text-fg placeholder:text-fg-subtle focus:border-border-strong focus:outline-none"
+						/>
+						<p className="mt-1 text-[11px] text-fg-subtle">
+							Doc page, paper, repo file, blog post — whatever this claim is sourced from.
+						</p>
+					</div>
+
+					<div>
+						<label className="block text-xs uppercase tracking-widest text-fg-subtle">
+							Additional citations (one per line, https only)
 						</label>
 						<textarea
 							value={citations}

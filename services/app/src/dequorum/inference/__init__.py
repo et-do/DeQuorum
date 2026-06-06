@@ -1,31 +1,17 @@
-"""Inference: base model adapter + composition strategies + the query pipeline."""
+"""Inference: base model adapter + the offline query pipeline."""
 
 from dequorum.inference.base_model import BaseModel, MockBaseModel, OllamaBaseModel
-from dequorum.inference.composition import (
-    STRATEGIES,
-    CompositionResult,
-    CompositionStrategy,
-    ConcatStrategy,
-    PickBestStrategy,
-    make_strategy,
-)
 from dequorum.inference.pipeline import (
-    ExpertAnswer,
+    CategoryAnswer,
     NetworkResponse,
     Pipeline,
 )
 
 __all__ = [
-    "STRATEGIES",
     "BaseModel",
-    "CompositionResult",
-    "CompositionStrategy",
-    "ConcatStrategy",
-    "ExpertAnswer",
+    "CategoryAnswer",
     "MockBaseModel",
     "NetworkResponse",
     "OllamaBaseModel",
-    "PickBestStrategy",
     "Pipeline",
-    "make_strategy",
 ]

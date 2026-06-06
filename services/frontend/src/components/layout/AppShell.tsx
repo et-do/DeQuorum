@@ -1,156 +1,206 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
+import { ResizableSidebar } from "@/components/layout/ResizableSidebar";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
+import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/cn";
 import { type Role, useRoles } from "@/lib/roles";
 
 /**
- * App shell: persistent left sidebar + main content area. Sidebar items
- * are role-gated via the optional `roles` predicate; everyone sees
- * Dashboard, Explore, and Account.
+ * App shell.
  *
- * On screens narrower than `md` (768px), the sidebar collapses behind a
- * hamburger button to keep the content area usable on mobile.
+ * Sidebar IA, organized by what the user is *here to do*, not by
+ * what database tables exist. Every entry is purposeful for at least
+ * one role; the four `explore/*` table viewers are folded behind a
+ * single "Network" entry that lands on /app/explore.
+ *
+ *   - Ask        — chat with the network (every authed user)
+ *   - Publish    — submit signed contributions (contributors)
+ *   - Review     — triage/vote on pending submissions (reviewers)
+ *   - Node       — host inference (hosts)
+ *   - Network    — browse experts/contributions/contributors/categories
+ *
+ * Account + theme live in the sidebar footer so the rest of the
+ * surface stays a focused workspace.
+ *
+ * No desktop top bar — the sidebar already carries the brand mark.
+ * Mobile gets a slim header strip with the hamburger.
  */
 
 interface NavItem {
 	to: string;
 	label: string;
-	/** When set, only show if the user has at least one of these roles. */
+	icon: string;
+	/** Roles that this entry is FOR. Omit for items every authed user sees. */
 	roles?: Role[];
-	/** Section header above this group. */
-	group?: string;
+	/** One-line description shown on hover or in the expanded form;
+	 * makes the entry self-explanatory without needing a separate doc. */
+	hint?: string;
 }
 
-const NAV: NavItem[] = [
-	{ group: "OVERVIEW", to: "/app", label: "Dashboard" },
-
-	{ group: "MY WORK", to: "/app/ask", label: "Ask", roles: ["user"] },
+const NAV_PRIMARY: NavItem[] = [
 	{
-		group: "MY WORK",
-		to: "/app/contribute",
-		label: "Contribute",
-		roles: ["contributor"],
+		to: "/app/ask",
+		label: "Ask",
+		icon: "?",
+		hint: "Chat with the network",
 	},
 	{
-		group: "MY WORK",
+		to: "/app/contribute",
+		label: "Publish",
+		icon: "+",
+		roles: ["contributor"],
+		hint: "Submit a signed contribution",
+	},
+	{
 		to: "/app/review",
 		label: "Review",
+		icon: "✓",
 		roles: ["reviewer"],
-	},
-	{ group: "MY WORK", to: "/app/host", label: "Host", roles: ["host"] },
-
-	{ group: "EXPLORE", to: "/app/explore/experts", label: "Experts" },
-	{
-		group: "EXPLORE",
-		to: "/app/explore/contributions",
-		label: "Contributions",
+		hint: "Triage and vote on pending submissions",
 	},
 	{
-		group: "EXPLORE",
-		to: "/app/explore/contributors",
-		label: "Contributors",
+		to: "/app/host",
+		label: "Host",
+		icon: "◇",
+		roles: ["host"],
+		hint: "Run inference for the network",
 	},
-	{ group: "EXPLORE", to: "/app/explore/categories", label: "Categories" },
-
-	{ group: "ACCOUNT", to: "/app/account", label: "Settings" },
 ];
+
+const NAV_SECONDARY: NavItem[] = [
+	{
+		to: "/app/explore",
+		label: "Network",
+		icon: "◯",
+		hint: "Browse experts, contributions, contributors, categories",
+	},
+];
+
+const NAV_FOOTER: NavItem[] = [{ to: "/app/account", label: "Settings", icon: "⚙" }];
 
 export function AppShell({ children }: { children: ReactNode }) {
 	const { roles } = useRoles();
+	const { user } = useAuth();
 	const [mobileOpen, setMobileOpen] = useState(false);
-	const matches = useRouterState({ select: (s) => s.location.pathname });
+	const pathname = useRouterState({ select: (s) => s.location.pathname });
 
-	const visible = NAV.filter((item) => !item.roles || item.roles.some((r) => roles.has(r)));
-	const groups = Array.from(new Set(visible.map((i) => i.group ?? "")));
+	const visible = (items: NavItem[]) =>
+		items.filter((i) => !i.roles || i.roles.some((r) => roles.has(r)));
+
+	const primary = visible(NAV_PRIMARY);
+	const secondary = visible(NAV_SECONDARY);
+	const footer = visible(NAV_FOOTER);
+
+	const renderItem = (collapsed: boolean) => (item: NavItem) => {
+		const active = item.to === "/app" ? pathname === "/app" : pathname.startsWith(item.to);
+		return (
+			<li key={item.to}>
+				<Link
+					to={item.to}
+					onClick={() => setMobileOpen(false)}
+					title={item.hint ?? item.label}
+					className={cn(
+						"flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors",
+						collapsed && "justify-center px-2",
+						active ? "bg-bg-muted text-fg" : "text-fg-muted hover:bg-bg-muted hover:text-fg",
+					)}
+				>
+					<span aria-hidden="true" className="inline-block w-4 text-center text-xs">
+						{item.icon}
+					</span>
+					{!collapsed && <span className="truncate">{item.label}</span>}
+				</Link>
+			</li>
+		);
+	};
 
 	return (
 		<div className="flex min-h-screen bg-bg text-fg">
-			{/* Sidebar */}
-			<aside
+			<ResizableSidebar
+				id="app-nav"
 				aria-label="App"
-				className={cn(
-					"fixed inset-y-0 left-0 z-40 w-64 transform border-r border-border bg-bg-elevated transition-transform md:relative md:translate-x-0",
-					mobileOpen ? "translate-x-0" : "-translate-x-full",
-				)}
+				mobileOpen={mobileOpen}
+				onMobileClose={() => setMobileOpen(false)}
+				defaultWidth={232}
+				minWidth={200}
+				maxWidth={320}
 			>
-				<div className="flex h-14 items-center justify-between border-b border-border px-4">
-					<Link
-						to="/app"
-						onClick={() => setMobileOpen(false)}
-						className="font-bold tracking-widest"
-					>
-						DEQUORUM
-					</Link>
-					<a
-						href="/"
-						className="text-xs uppercase tracking-widest text-fg-subtle hover:text-fg"
-						title="Back to marketing site"
-					>
-						↗
-					</a>
-				</div>
-
-				<nav className="space-y-6 px-2 py-4">
-					{groups.map((g) => (
-						<div key={g}>
-							{g && (
-								<div className="px-3 pb-2 text-xs uppercase tracking-widest text-fg-subtle">
-									{g}
-								</div>
+				{({ collapsed, toggleCollapsed }) => (
+					<>
+						<div className="flex h-14 items-center justify-between px-3">
+							<Link
+								to="/app"
+								onClick={() => setMobileOpen(false)}
+								className="block min-w-0 truncate font-bold tracking-widest"
+							>
+								{collapsed ? "DQ" : "DEQUORUM"}
+							</Link>
+							{!collapsed && (
+								<a
+									href="/"
+									className="text-xs uppercase tracking-widest text-fg-subtle hover:text-fg"
+									title="Back to marketing site"
+								>
+									↗
+								</a>
 							)}
-							<ul className="space-y-1">
-								{visible
-									.filter((i) => (i.group ?? "") === g)
-									.map((item) => {
-										const active =
-											item.to === "/app" ? matches === "/app" : matches.startsWith(item.to);
-										return (
-											<li key={item.to}>
-												<Link
-													to={item.to}
-													onClick={() => setMobileOpen(false)}
-													className={cn(
-														"block px-3 py-2 text-sm",
-														active
-															? "bg-fg text-bg"
-															: "text-fg-muted hover:bg-bg-muted hover:text-fg",
-													)}
-												>
-													{item.label}
-												</Link>
-											</li>
-										);
-									})}
-							</ul>
 						</div>
-					))}
-				</nav>
-			</aside>
 
-			{/* Mobile backdrop */}
-			{mobileOpen && (
-				<button
-					type="button"
-					aria-label="Close menu"
-					onClick={() => setMobileOpen(false)}
-					className="fixed inset-0 z-30 bg-bg/70 backdrop-blur-sm md:hidden"
-				/>
-			)}
+						<nav className="flex-1 overflow-y-auto px-2 py-3">
+							<ul className="space-y-0.5">{primary.map(renderItem(collapsed))}</ul>
+							{secondary.length > 0 && (
+								<>
+									<div role="presentation" className="my-3 h-px bg-border/60" />
+									<ul className="space-y-0.5">{secondary.map(renderItem(collapsed))}</ul>
+								</>
+							)}
+						</nav>
 
-			{/* Main */}
+						<div className="px-2 pb-2">
+							<ul className="space-y-0.5">{footer.map(renderItem(collapsed))}</ul>
+							<div
+								className={cn(
+									"mt-2 flex items-center gap-2 rounded-lg px-3 py-2",
+									collapsed && "flex-col px-1",
+								)}
+							>
+								{!collapsed && user && (
+									<span
+										className="min-w-0 flex-1 truncate text-xs text-fg-subtle"
+										title={user.email ?? undefined}
+									>
+										{user.displayName ?? user.email ?? "Signed in"}
+									</span>
+								)}
+								<ThemeToggle />
+								<button
+									type="button"
+									onClick={toggleCollapsed}
+									aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+									title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+									className="flex h-7 w-7 items-center justify-center rounded-md text-xs text-fg-subtle transition-colors hover:bg-bg-muted hover:text-fg"
+								>
+									{collapsed ? "›" : "‹"}
+								</button>
+							</div>
+						</div>
+					</>
+				)}
+			</ResizableSidebar>
+
 			<div className="flex min-w-0 flex-1 flex-col">
-				<header className="flex h-14 items-center justify-between border-b border-border bg-bg px-4 md:px-6">
+				{/* Mobile-only header strip — desktop relies on the sidebar
+				    brand mark + footer chrome and doesn't need a top bar. */}
+				<header className="flex h-10 items-center bg-bg px-4 md:hidden">
 					<button
 						type="button"
 						aria-label="Open menu"
 						onClick={() => setMobileOpen(true)}
-						className="md:hidden"
+						className="text-fg-muted hover:text-fg"
 					>
 						☰
 					</button>
-					<div />
-					<ThemeToggle />
 				</header>
 				<main className="flex-1 px-4 py-6 md:px-8 md:py-10">{children}</main>
 			</div>

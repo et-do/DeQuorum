@@ -14,7 +14,6 @@ from dequorum.knowledge.store import ContributionStore
 
 def _c(text: str, lineage_id: str | None = None, version: int = 1) -> Contribution:
     return Contribution.create(
-        expert_id="x",
         contributor_id="dq:test",
         primary_category_id="test",
         text=text,

@@ -15,7 +15,7 @@ export function Skeleton({
 	return (
 		<As
 			aria-hidden="true"
-			className={cn("block animate-pulse border border-border bg-bg-muted", className)}
+			className={cn("shimmer block rounded-md border border-border bg-bg-muted", className)}
 		/>
 	);
 }

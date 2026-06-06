@@ -34,3 +34,16 @@ explicitly:
 ```bash
 docker compose exec app uv run dequorum db upgrade
 ```
+
+## Schema documentation
+
+The canonical schema lives in this directory, alongside the service that owns it:
+
+- [`data-model.dbml`](data-model.dbml) — DBML source. Paste into [dbdiagram.io](https://dbdiagram.io/d) to render the ERD.
+- [`data-model.md`](data-model.md) — narrative overview: which dataclass produces each table, what's present today vs. planned, how the proof chain composes.
+
+The Python SQL execution lives in the per-domain stores under
+[`services/app/src/dequorum/`](../app/src/dequorum/) (`knowledge/store.py`,
+`chat/store.py`, `identity/store.py`, `comments/store.py`, `taxonomy/store.py`).
+The DBML stays authoritative for the *shape*; Alembic migrations stay
+authoritative for the *order in which the shape was built*.

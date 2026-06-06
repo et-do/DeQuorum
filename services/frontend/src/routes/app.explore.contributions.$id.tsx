@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { CommentThread } from "@/components/contributions/CommentThread";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardHeader } from "@/components/ui/Card";
@@ -57,7 +58,7 @@ function ContributionDetail() {
 						<span>tally {c.tally >= 0 ? `+${c.tally}` : c.tally}</span>
 					</span>
 				}
-				title={c.expert_id}
+				title={c.primary_category_id}
 			/>
 
 			<Card>
@@ -118,6 +119,8 @@ function ContributionDetail() {
 					</ul>
 				)}
 			</Card>
+
+			<CommentThread contributionId={c.contribution_id} />
 		</div>
 	);
 }

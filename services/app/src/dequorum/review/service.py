@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Final
 
 from dequorum.core.errors import CompositionError
-from dequorum.experts import ExpertRegistry
 from dequorum.knowledge.status import (
     STATUS_APPROVED,
     STATUS_PENDING,
@@ -36,11 +35,8 @@ class ReviewService:
     is disallowed.
     """
 
-    def __init__(
-        self, store: ContributionStore, registry: ExpertRegistry | None = None
-    ) -> None:
+    def __init__(self, store: ContributionStore) -> None:
         self._store = store
-        self._registry = registry
 
     def cast_vote(
         self,
@@ -58,21 +54,18 @@ class ReviewService:
                 f"self-voting forbidden: {voter_id!r} is the contributor"
             )
 
-        if signing_key is None:
-            signing_key = self._signing_key_for(voter_id)
+        # Without a registered key the voter signs with a stub derived
+        # from their id — sufficient for the dev path; real signups
+        # supply their own ed25519 key.
+        key = signing_key if signing_key is not None else voter_id.encode()
         vote = Vote.create(
             contribution_id=contribution_id,
             voter_id=voter_id,
             score=score,
-            signing_key=signing_key,
+            signing_key=key,
         )
         self._store.add_vote(vote)
         return self._evaluate(contribution_id)
-
-    def _signing_key_for(self, voter_id: str) -> bytes:
-        if self._registry is not None and voter_id in self._registry:
-            return self._registry.get(voter_id).signing_key
-        return voter_id.encode()
 
     def _evaluate(self, contribution_id: str) -> ReviewOutcome:
         previous = self._store.get_status(contribution_id) or STATUS_PENDING

@@ -4,13 +4,12 @@ from dequorum.knowledge.contribution import Contribution
 from dequorum.knowledge.store import ContributionStore
 
 
-def _c(expert: str, text: str) -> Contribution:
+def _c(contributor: str, text: str) -> Contribution:
     return Contribution.create(
-        expert_id=expert,
-        contributor_id=expert,
+        contributor_id=contributor,
         text=text,
         citations=("https://example.com",),
-        signing_key=expert.encode(),
+        signing_key=contributor.encode(),
     )
 
 
@@ -30,14 +29,14 @@ def test_idempotent_add() -> None:
         assert len(s) == 1
 
 
-def test_list_for_expert_filters_correctly() -> None:
+def test_list_by_contributor_filters_correctly() -> None:
     with ContributionStore() as s:
         s.add(_c("py", "python fact"))
         s.add(_c("rs", "rust fact"))
         s.add(_c("py", "another python fact"))
-        py = s.list_for_expert("py")
+        py = s.list_by_contributor("py")
         assert len(py) == 2
-        assert all(c.expert_id == "py" for c in py)
+        assert all(c.contributor_id == "py" for c in py)
 
 
 def test_iter_all() -> None:

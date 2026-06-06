@@ -1,4 +1,4 @@
-"""Routing: pick which experts should answer a query."""
+"""Routing: pick which category should ground an incoming query."""
 
 from dequorum.routing.embedder import (
     Embedder,
@@ -8,7 +8,7 @@ from dequorum.routing.embedder import (
 )
 from dequorum.routing.embedding import EmbeddingRouter
 from dequorum.routing.keyword import KeywordRouter
-from dequorum.routing.result import RoutingResult, SelectedExpert
+from dequorum.routing.result import RoutingResult, SelectedCategory
 
 __all__ = [
     "Embedder",
@@ -16,7 +16,7 @@ __all__ = [
     "HashEmbedder",
     "KeywordRouter",
     "RoutingResult",
-    "SelectedExpert",
+    "SelectedCategory",
     "SentenceTransformerEmbedder",
     "cosine_sim",
 ]

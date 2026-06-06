@@ -15,7 +15,6 @@ from dequorum.review.service import ReviewService
 
 def _c(expert_id: str = "py", contributor_id: str = "py") -> Contribution:
     return Contribution.create(
-        expert_id=expert_id,
         contributor_id=contributor_id,
         text="some claim",
         citations=(),
@@ -98,15 +97,15 @@ def test_retrieval_excludes_pending_contributions() -> None:
 
     store = ContributionStore()
     approved = Contribution.create(
-        expert_id="py",
         contributor_id="py",
+        primary_category_id="programming/python/typing",
         text="approved python typing fact",
         citations=(),
         signing_key=b"k",
     )
     pending = Contribution.create(
-        expert_id="py",
         contributor_id="py",
+        primary_category_id="programming/python/typing",
         text="pending python typing fact",
         citations=(),
         signing_key=b"k2",
@@ -114,7 +113,9 @@ def test_retrieval_excludes_pending_contributions() -> None:
     store.add(approved, status=STATUS_APPROVED)
     store.add(pending, status=STATUS_PENDING)
 
-    results = Retriever(store).retrieve("python typing", "py", top_k=5)
+    results = Retriever(store).retrieve(
+        "python typing", "programming/python/typing", top_k=5
+    )
     texts = [r.contribution.text for r in results]
     assert "approved python typing fact" in texts
     assert "pending python typing fact" not in texts

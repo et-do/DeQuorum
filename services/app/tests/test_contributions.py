@@ -5,7 +5,6 @@ from dequorum.knowledge.contribution import Contribution
 
 def _make(text: str = "asyncio.create_task schedules onto a loop") -> Contribution:
     return Contribution.create(
-        expert_id="python-async",
         contributor_id="python-async",
         text=text,
         citations=("https://docs.python.org/3/library/asyncio-task.html",),
@@ -33,14 +32,12 @@ def test_signature_carries_contributor_id() -> None:
 
 def test_signature_changes_with_key() -> None:
     a = Contribution.create(
-        expert_id="e",
         contributor_id="e",
         text="x",
         citations=(),
         signing_key=b"k1",
     )
     b = Contribution.create(
-        expert_id="e",
         contributor_id="e",
         text="x",
         citations=(),

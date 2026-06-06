@@ -35,7 +35,6 @@ class Contribution:
     lineage_id: str
     version_number: int
     parent_version: int | None
-    expert_id: str
     contributor_id: str
     primary_category_id: str
     text: str
@@ -46,7 +45,6 @@ class Contribution:
     def create(
         cls,
         *,
-        expert_id: str,
         contributor_id: str,
         text: str,
         citations: tuple[str, ...],
@@ -74,7 +72,6 @@ class Contribution:
             )
 
         payload = {
-            "expert_id": expert_id,
             "contributor_id": contributor_id,
             "primary_category_id": primary_category_id,
             "text": text,
@@ -95,7 +92,6 @@ class Contribution:
             lineage_id=lineage_id,
             version_number=version_number,
             parent_version=parent_version,
-            expert_id=expert_id,
             contributor_id=contributor_id,
             primary_category_id=primary_category_id,
             text=text,
@@ -118,7 +114,6 @@ class Contribution:
         (status is tracked in the store, not on the dataclass).
         """
         return Contribution.create(
-            expert_id=self.expert_id,
             contributor_id=self.contributor_id,
             primary_category_id=primary_category_id or self.primary_category_id,
             text=text if text is not None else self.text,

@@ -1,70 +1,48 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
+import { useEffect, useState } from "react";
+import { SignInPanel } from "@/components/auth/SignInPanel";
 import { Button } from "@/components/ui/Button";
 import { Container } from "@/components/ui/Container";
 import { Stepper } from "@/components/ui/Stepper";
-import { useAccount } from "@/lib/account";
-import { createContributor, getAgreement } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { ALL_ROLES, type Role, useRoles } from "@/lib/roles";
 import { useToasts } from "@/lib/toasts";
 
 /**
- * Onboarding wizard. Lives at the top level (not under /app) so users
- * arriving from the marketing CTA don't see app chrome around it.
+ * Single onboarding flow:
  *
- * Steps:
- *   1 Welcome — what the network is and what they'll set up
- *   2 Roles  — multi-select (one or more required)
- *   3 Profile — display name + optional email
- *   4 Keypair — sign the agreement, generate a keypair, reveal once
+ *   1  Welcome    — what the network is, what you'll set up
+ *   2  Sign in    — Firebase Auth (email/password or Google).
+ *                   Auth state advances the step automatically once a
+ *                   user is present.
+ *   3  Roles      — pick what you want to do; persists to localStorage
+ *                   (server-side role storage comes when contributor
+ *                   profiles ship).
+ *   4  Done       — straight to the dashboard.
+ *
+ * The wizard lives outside the app shell so unauthenticated users hit it
+ * directly without app chrome distractions.
  */
 export const Route = createFileRoute("/onboarding")({
 	component: OnboardingWizard,
 });
 
-const STEPS = [{ label: "Welcome" }, { label: "Roles" }, { label: "Profile" }, { label: "Keys" }];
+const STEPS = [{ label: "Welcome" }, { label: "Sign in" }, { label: "Roles" }] as const;
 
 function OnboardingWizard() {
 	const navigate = useNavigate();
+	const { user, ready: authReady } = useAuth();
+	const { set: setRolesValue, roles } = useRoles();
 	const { toast } = useToasts();
-	const { set: setRolesValue } = useRoles();
-	const { setAccount } = useAccount();
-	const agreement = useQuery({
-		queryKey: ["agreement"],
-		queryFn: getAgreement,
-	});
 
 	const [step, setStep] = useState(0);
-	const [selected, setSelected] = useState<Set<Role>>(new Set());
-	const [displayName, setDisplayName] = useState("");
-	const [email, setEmail] = useState("");
-	const [created, setCreated] = useState<{
-		contributor_id: string;
-		display_name: string;
-		public_key_hex: string;
-		private_key_hex: string;
-	} | null>(null);
+	const [selected, setSelected] = useState<Set<Role>>(new Set(roles));
 
-	const create = useMutation({
-		mutationFn: createContributor,
-		onSuccess: (res) => {
-			setCreated({
-				contributor_id: res.contributor_id,
-				display_name: res.display_name,
-				public_key_hex: res.public_key_hex,
-				private_key_hex: res.private_key_hex,
-			});
-			setAccount({
-				contributor_id: res.contributor_id,
-				display_name: res.display_name,
-				public_key_hex: res.public_key_hex,
-			});
-			setRolesValue(selected);
-			toast("Account created", { tone: "success" });
-		},
-		onError: (err: Error) => toast(err.message, { tone: "error", durationMs: 8000 }),
-	});
+	// Once Firebase auth completes, jump past the sign-in step.
+	useEffect(() => {
+		if (!authReady) return;
+		if (user && step <= 1) setStep(2);
+	}, [user, authReady, step]);
 
 	function toggleRole(r: Role) {
 		setSelected((prev) => {
@@ -75,41 +53,53 @@ function OnboardingWizard() {
 		});
 	}
 
-	function onProfileSubmit(e: FormEvent<HTMLFormElement>) {
-		e.preventDefault();
-		if (!displayName.trim()) return;
-		setStep(3);
-		create.mutate({
-			display_name: displayName.trim(),
-			email: email.trim() || undefined,
-		});
+	function finish() {
+		setRolesValue(selected);
+		toast("Welcome aboard", { tone: "success" });
+		navigate({ to: "/app" });
 	}
 
 	return (
 		<Container className="py-12 sm:py-16">
-			<Stepper steps={STEPS} current={step} className="mb-10" />
+			<Stepper steps={[...STEPS]} current={step} className="mb-10" />
 
 			{step === 0 && (
 				<section className="space-y-6">
 					<h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Welcome to DeQuorum</h1>
 					<p className="text-fg-muted">
-						This is the setup flow for a new account. You'll pick what you want to do on the
-						network, choose a display name, and walk away with a signing keypair. Takes about a
-						minute.
+						DeQuorum is a crowdsourced AI platform owned by the people who make it work. This setup
+						takes about a minute — you sign in, pick what you want to do, and you're in.
 					</p>
-					<div className="flex gap-3">
-						<Button size="lg" onClick={() => setStep(1)}>
-							Get started
+					<Button size="lg" onClick={() => setStep(1)}>
+						Get started
+					</Button>
+				</section>
+			)}
+
+			{step === 1 && !user && (
+				<section className="space-y-6">
+					<header className="space-y-2">
+						<h1 className="text-2xl font-bold tracking-tight">Create an account or sign in</h1>
+						<p className="text-fg-muted">
+							Your sessions, contributions, and earnings live under this account.
+						</p>
+					</header>
+					<div className="mx-auto max-w-md">
+						<SignInPanel />
+					</div>
+					<div className="flex justify-start">
+						<Button variant="ghost" onClick={() => setStep(0)}>
+							Back
 						</Button>
 					</div>
 				</section>
 			)}
 
-			{step === 1 && (
+			{step === 2 && (
 				<section className="space-y-6">
 					<header className="space-y-2">
 						<h1 className="text-2xl font-bold tracking-tight">What do you want to do?</h1>
-						<p className="text-fg-muted">Pick one or more. You can change this later.</p>
+						<p className="text-fg-muted">Pick one or more. You can change this later in Account.</p>
 					</header>
 					<ul className="grid gap-3 sm:grid-cols-2">
 						{ALL_ROLES.map((r) => {
@@ -136,119 +126,15 @@ function OnboardingWizard() {
 						})}
 					</ul>
 					<div className="flex justify-between">
-						<Button variant="ghost" onClick={() => setStep(0)}>
-							Back
-						</Button>
-						<Button onClick={() => setStep(2)} disabled={selected.size === 0}>
-							Continue
-						</Button>
-					</div>
-				</section>
-			)}
-
-			{step === 2 && (
-				<form className="space-y-6" onSubmit={onProfileSubmit}>
-					<header className="space-y-2">
-						<h1 className="text-2xl font-bold tracking-tight">Profile</h1>
-						<p className="text-fg-muted">
-							The display name is public. Email is optional and hashed locally for tier upgrades.
-						</p>
-					</header>
-					<div className="space-y-4">
-						<div>
-							<label className="block text-xs uppercase tracking-widest text-fg-subtle">
-								Display name
-							</label>
-							<input
-								value={displayName}
-								onChange={(e) => setDisplayName(e.target.value)}
-								required
-								autoFocus
-								className="mt-1 w-full border border-border bg-bg px-3 py-2 text-fg focus:border-border-strong focus:outline-none"
-							/>
-						</div>
-						<div>
-							<label className="block text-xs uppercase tracking-widest text-fg-subtle">
-								Email <span className="normal-case text-fg-muted">(optional)</span>
-							</label>
-							<input
-								type="email"
-								value={email}
-								onChange={(e) => setEmail(e.target.value)}
-								className="mt-1 w-full border border-border bg-bg px-3 py-2 text-fg focus:border-border-strong focus:outline-none"
-							/>
-						</div>
-						{agreement.data && (
-							<details className="border border-border bg-bg p-4">
-								<summary className="cursor-pointer text-xs uppercase tracking-widest text-fg-subtle">
-									Agreement v{agreement.data.version} (signed on completion)
-								</summary>
-								<pre className="mt-3 max-h-60 overflow-auto whitespace-pre-wrap text-sm text-fg-muted">
-									{agreement.data.text}
-								</pre>
-							</details>
-						)}
-					</div>
-					<div className="flex justify-between">
 						<Button variant="ghost" onClick={() => setStep(1)}>
 							Back
 						</Button>
-						<Button type="submit" disabled={create.isPending}>
-							{create.isPending ? "Creating…" : "Create account"}
+						<Button size="lg" onClick={finish} disabled={selected.size === 0}>
+							Finish
 						</Button>
 					</div>
-				</form>
-			)}
-
-			{step === 3 && (
-				<section className="space-y-6">
-					{create.isPending && <p className="text-fg-muted">Generating keypair…</p>}
-					{create.isError && <p className="text-fg-muted">{(create.error as Error).message}</p>}
-					{created && (
-						<>
-							<header className="space-y-2">
-								<h1 className="text-2xl font-bold tracking-tight">Save your private key</h1>
-								<p className="text-fg-muted">
-									This is the only time you'll see this. Save it somewhere safe. The network can't
-									recover it.
-								</p>
-							</header>
-							<div className="space-y-3">
-								<KeyLine label="Contributor ID" value={created.contributor_id} />
-								<KeyLine label="Public key" value={created.public_key_hex} />
-								<KeyLine label="Private key" value={created.private_key_hex} danger />
-							</div>
-							<Button size="lg" onClick={() => navigate({ to: "/app" })}>
-								I saved it — go to dashboard
-							</Button>
-						</>
-					)}
 				</section>
 			)}
 		</Container>
-	);
-}
-
-function KeyLine({ label, value, danger }: { label: string; value: string; danger?: boolean }) {
-	return (
-		<div className="space-y-1">
-			<div className="flex items-center justify-between text-xs uppercase tracking-widest text-fg-subtle">
-				<span>{label}</span>
-				<button
-					type="button"
-					onClick={() => navigator.clipboard.writeText(value)}
-					className="hover:text-fg"
-				>
-					Copy
-				</button>
-			</div>
-			<pre
-				className={`overflow-x-auto border p-2 text-sm ${
-					danger ? "border-fg bg-bg-muted text-fg" : "border-border bg-bg text-fg"
-				}`}
-			>
-				{value}
-			</pre>
-		</div>
 	);
 }

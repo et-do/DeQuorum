@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, Outlet, useRouterState } from "@tanstack/react-router";
 import { Footer } from "@/components/layout/Footer";
 import { TopNav } from "@/components/layout/TopNav";
+import { TopProgress } from "@/components/ui/TopProgress";
 
 /**
  * Root layout. Marketing routes (everything outside /app/*) render with
@@ -22,12 +23,17 @@ function RootComponent() {
 	const isApp = path === "/app" || path.startsWith("/app/");
 
 	if (isApp) {
-		// AppShell wraps the outlet itself.
-		return <Outlet />;
+		return (
+			<>
+				<TopProgress />
+				<Outlet />
+			</>
+		);
 	}
 
 	return (
 		<div className="flex min-h-screen flex-col bg-bg text-fg">
+			<TopProgress />
 			<TopNav />
 			<main className="flex-1">
 				<Outlet />

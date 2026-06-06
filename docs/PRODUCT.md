@@ -1,6 +1,6 @@
 # DeQuorum — Product
 
-> **Status:** v0.1 in development. Single-machine simulation with 5 seed experts and 25 seed contributions; working trace UI; embedding-routed pipeline with peer-review queue. No external users yet. Targeting first external testers in ~3 months. Codebase / Python package: `dequorum`.
+> **Status:** v0.1 in development. Single-machine simulation with 5 routable seed categories carrying personas (python-typing, python-async, python-packaging, rust-ownership, http-protocol) and 25 seed contributions; chat UI with NDJSON streaming; embedding-routed pipeline with peer-review queue. No external users yet. Targeting first external testers in ~3 months. Codebase / Python package: `dequorum`.
 
 ## 1. What this system is
 
@@ -24,7 +24,7 @@ Today's AI knowledge systems are remarkable, but three things are missing from t
 | What's missing | What DeQuorum adds |
 | --------------- | ------------------ |
 | **Verifiable sources.** It's hard to tell where any given answer's claims came from. | Every answer ships with a signed chain of contributors, each independently verifiable. |
-| **Honesty about limits.** Today's models often answer confidently even when they shouldn't. | Only peer-approved knowledge can shape answers. When no qualified expert has weighed in, the system says so plainly instead of guessing. |
+| **Honesty about limits.** Today's models often answer confidently even when they shouldn't. | Only peer-approved knowledge can shape answers. When no qualified category covers the question, the system falls through to a plain base-model answer without claiming contributor-grounded authority. |
 | **Shared upside for the people whose knowledge made it work.** | Every query credits each contributor whose knowledge shaped the answer. Real money flows back (Stripe ACH when revenue allows). |
 
 ## 3. What it hopes to achieve at scale
@@ -52,7 +52,7 @@ The same person can wear multiple hats over time.
 | ---- | ------------- | -------------------- |
 | **Contributor** (individual or organization) | Recognition with citations + recurring micro-payments + clean attribution trail | Signed factual claims in any domain, with citations and an attestation that the content is theirs or public-domain |
 | **Reviewer** | Smaller micro-payments + visible domain reputation | Votes (approve / reject / abstain) on submitted contributions |
-| **Compute Host** | Per-query payments | A machine running an expert node (LoRA adapter + base model + serving stack) |
+| **Compute Host** | Per-query payments | A machine running an inference node (base model + LoRA adapters + serving stack) |
 | **Developer** | Reputation in the project; eventually paid for accepted contributions | Reviews the system's internals — code, routing logic, attribution math, security — not content |
 | **End User** | Verifiable, citable answers; no "trust me" required | Queries (paid per-query at v1.0) + optional feedback |
 | **Instance Operator** | Influence over their instance's policies; reputation for running a clean network | Infrastructure: orchestrator, voting service, ledger, moderation |
@@ -83,7 +83,7 @@ These defenses are **required before public launch**. They are not credentialing
 
 - **Freemium subscription** — consumer default: ~10 free queries/day, $15/month for unlimited
 - **B2B / enterprise tier** — $20/seat/month for companies wanting auditable AI as part of their tooling
-- **Sponsored verticals** — companies pay to sponsor a domain (e.g. AWS sponsors cloud-infrastructure experts). Disclosure mandatory: *"This domain is sponsored by X. Funding does not influence peer review outcomes."*
+- **Sponsored verticals** — companies pay to sponsor a category (e.g. AWS sponsors the cloud-infrastructure category). Disclosure mandatory: *"This domain is sponsored by X. Funding does not influence peer review outcomes."*
 - **Donation pool** — bootstraps unfunded domains; early contributors in fresh verticals get paid from the pool until that vertical self-sustains
 
 No real crypto for v0.1. Stripe ACH for payouts. Crypto considered later as an option (not a requirement).
@@ -209,7 +209,7 @@ Lots of great work exists in this space; here's where DeQuorum fits relative to 
 | Wikipedia | Anyone-can-contribute, peer-voted knowledge | Atomic facts that an AI can compose into fresh answers; contributors paid per cite |
 | Stack Overflow | Knowledge from domain practitioners | AI-synthesized current answers (not just historical Q&A archive); pay-per-cite model |
 | Bittensor | Decentralized AI with built-in incentives | Per-source attribution is part of the inference itself, not a validator opinion poll; no blockchain dependency |
-| Petals | Decentralized inference | Many small specialized adapters (one expert per node) instead of one big model split across peers; fast on a single machine |
+| Petals | Decentralized inference | Many small specialized adapters (one per category) instead of one big model split across peers; fast on a single machine |
 | Hivemind | Distributed AI infrastructure | Modular per-contributor adapters that preserve attribution end-to-end, instead of collaborative base-model training that blends gradients |
 
 ## 10. Regulatory & liability posture
@@ -238,7 +238,7 @@ Honest about what's undecided:
 - **Legal entity.** LLC? Public-benefit corp? Nonprofit foundation? Affects governance, fundraising, IP defaults.
 - **Sybil resistance specifics.** Phone/email? Social proof? Stake-to-vote? Credential attachment? Pick one before public launch.
 - **Cross-domain reasoning quality.** When a question genuinely needs knowledge from multiple domains, does our composition strategy hold up? Empirical question, unanswered.
-- **Routing quality past ~1000 experts.** Embedding routing works well at small scale. Graceful degradation vs. catastrophic failure is untested.
+- **Routing quality past ~1000 routable categories.** Embedding routing works well at small scale. Graceful degradation vs. catastrophic failure is untested.
 - **Reputation algorithm.** How does the reputation-weighted voting actually compute weights? Linear? Logarithmic? Decay-with-time? Real design work.
 - **Moderation appeals process.** When a contribution is rejected or a contributor is sanctioned, what's the appeal flow?
 
@@ -252,13 +252,12 @@ Honest about what's undecided:
 
 Shared vocabulary the codebase already uses:
 
-- **Expert** — a signed persona that contributes knowledge in a domain. Backed by a system prompt today; backed by a LoRA adapter in Week 4+.
-- **Contribution** — a signed factual claim attached to an expert, with citations and an attestation.
+- **Category** — a node in the curated taxonomy tree. Routable leaves carry a *persona* (system prompt, specialty tags, example questions) and are eligible routing targets; internal nodes are organizational only.
+- **Contribution** — a signed factual claim filed under a category, with citations and an Ed25519 signature.
 - **Vote** — a signed +1/0/-1 from one user on one contribution. One slot per (contribution, voter); re-voting overwrites.
-- **Routing** — picking which experts should answer a given query (embedding-based by default; keyword as deterministic baseline).
-- **Retrieval** — pulling the most relevant *approved* contributions for each routed expert.
-- **Composition** — combining N expert answers into a final response (`pick_best` is the default; `concat` is also available).
-- **Proof chain** — the ordered list of signatures (contributions + expert answers) that produced the final response.
+- **Routing** — picking which category should ground a given query (embedding-based by default; keyword as deterministic baseline; trivial inputs bypass routing entirely).
+- **Retrieval** — pulling the most relevant *approved* contributions from the routed category's partition.
+- **Proof chain** — the ordered list of contribution signatures (plus the operator's signature on the produced answer) that record what grounded each response.
 - **Ledger** — the running record of who's owed how much.
 - **Instance** — one deployment of the DeQuorum orchestrator. Analogous to a Mastodon server.
 - **Reputation** — accumulated weight a voter has earned by voting with eventual consensus. Per-domain.

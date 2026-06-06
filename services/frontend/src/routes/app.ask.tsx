@@ -1,87 +1,50 @@
-import { useMutation } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
-import { type FormEvent, useState } from "react";
-import { Button } from "@/components/ui/Button";
-import { Card } from "@/components/ui/Card";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { runQuery } from "@/lib/api";
-import { useToasts } from "@/lib/toasts";
+import { createFileRoute, Outlet, useParams } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
+import { SessionSidebar } from "@/components/chat/SessionSidebar";
+import { withAuthHeader } from "@/lib/auth";
 
 export const Route = createFileRoute("/app/ask")({
-	component: AskRoute,
+	component: AskLayout,
 });
 
-function AskRoute() {
-	const { toast } = useToasts();
-	const [text, setText] = useState("");
-	const mutation = useMutation({
-		mutationFn: runQuery,
-		onSuccess: () => toast("Answer ready", { tone: "success" }),
-		onError: (e: Error) => toast(e.message, { tone: "error", durationMs: 8000 }),
-	});
+function AskLayout() {
+	const params = useParams({ strict: false }) as { sessionId?: string };
+	const [sidebarOpen, setSidebarOpen] = useState(false);
 
-	function onSubmit(e: FormEvent<HTMLFormElement>) {
-		e.preventDefault();
-		if (text.trim()) mutation.mutate(text.trim());
-	}
-
-	const response = mutation.data;
+	// Pre-warm Ollama so the user's first message doesn't pay the
+	// model-load cost. Fire-and-forget — failures are silently fine.
+	useEffect(() => {
+		(async () => {
+			try {
+				const auth = await withAuthHeader();
+				await fetch("/api/v1/inference/warmup", {
+					method: "POST",
+					headers: { "Content-Type": "application/json", ...auth },
+				});
+			} catch {
+				/* best-effort */
+			}
+		})();
+	}, []);
 
 	return (
-		<div className="mx-auto max-w-3xl space-y-8">
-			<PageHeader title="Ask" description="Query the panel." />
-
-			<form onSubmit={onSubmit} className="space-y-3">
-				<label className="block text-xs uppercase tracking-widest text-fg-subtle">Question</label>
-				<textarea
-					value={text}
-					onChange={(e) => setText(e.target.value)}
-					rows={4}
-					placeholder="python typing generator"
-					className="w-full border border-border bg-bg px-3 py-2 text-fg placeholder:text-fg-subtle focus:border-border-strong focus:outline-none"
-				/>
-				<div className="flex items-center gap-3">
-					<Button type="submit" disabled={mutation.isPending}>
-						{mutation.isPending ? "Running…" : "Run"}
-					</Button>
-				</div>
-			</form>
-
-			{response && (
-				<section className="space-y-4">
-					<Card>
-						<div className="text-xs uppercase tracking-widest text-fg-subtle">Answer</div>
-						<pre className="mt-3 whitespace-pre-wrap text-sm leading-relaxed">
-							{response.final_answer}
-						</pre>
-					</Card>
-
-					<Card>
-						<div className="text-xs uppercase tracking-widest text-fg-subtle">
-							Routing · {response.routing.method}
-							{response.routing.fallback_used ? " · fallback" : ""}
-						</div>
-						<ul className="mt-3 space-y-1 text-sm text-fg-muted">
-							{response.routing.selected.map((s) => (
-								<li key={s.expert_id}>
-									<span className="text-fg">{s.expert_id}</span> · {s.score.toFixed(3)}
-								</li>
-							))}
-						</ul>
-					</Card>
-
-					<Card>
-						<div className="text-xs uppercase tracking-widest text-fg-subtle">Ledger credits</div>
-						<ul className="mt-3 space-y-1 text-sm text-fg-muted">
-							{Object.entries(response.ledger).map(([k, v]) => (
-								<li key={k}>
-									<span className="text-fg">{k}</span>: {v}
-								</li>
-							))}
-						</ul>
-					</Card>
-				</section>
-			)}
+		<div className="-mx-4 -my-6 flex h-[calc(100vh-2.5rem)] md:-mx-8 md:-my-10 md:h-screen">
+			<SessionSidebar
+				activeSessionId={params.sessionId}
+				open={sidebarOpen}
+				onClose={() => setSidebarOpen(false)}
+			/>
+			<div className="flex min-w-0 flex-1 flex-col">
+				<button
+					type="button"
+					onClick={() => setSidebarOpen(true)}
+					aria-label="Open sessions"
+					className="flex h-10 items-center gap-2 bg-bg px-4 text-xs uppercase tracking-widest text-fg-muted hover:text-fg md:hidden"
+				>
+					☰ <span>Sessions</span>
+				</button>
+				<Outlet />
+			</div>
 		</div>
 	);
 }
