@@ -4,7 +4,7 @@
 # server-side code lives in this image — schema is applied at startup via
 # the init scripts, so the same SQL works locally and in Cloud SQL).
 
-FROM postgres:16-alpine
+FROM postgres:18-alpine
 
 # init/ runs only the first time the data directory is empty. Idempotent
 # bootstrap of the dequorum + dev databases lives here.
