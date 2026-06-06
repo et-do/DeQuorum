@@ -16,6 +16,14 @@ vi.mock("@tanstack/react-router", () => ({
 		select({ location: { pathname: mockPathname() } }),
 }));
 
+// Mock auth too — TopNav calls useAuth for its right-hand chrome, but these
+// tests assert on the brand mark, nav labels, theme toggle, and conditional
+// CTA, none of which depend on auth state. Mocking avoids needing an
+// <AuthProvider> wrapper (and a live Firebase context) just to render.
+vi.mock("@/lib/auth", () => ({
+	useAuth: () => ({ user: null, ready: false }),
+}));
+
 // Import AFTER vi.mock so the mocked module is what TopNav resolves.
 const { TopNav } = await import("./TopNav");
 
