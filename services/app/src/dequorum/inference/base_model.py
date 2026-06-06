@@ -29,11 +29,19 @@ class OllamaBaseModel:
     model: str = ""  # empty = look up the default from inference/models.py
     host: str = "http://localhost:11434"
     timeout_seconds: float = 120.0
+    # Bound generation length. CPU inference cost scales linearly with the
+    # number of tokens produced, so an uncapped reply (a chatty 7B model
+    # happily pads a greeting to 100+ tokens) can run ~15-20s. 512 tokens
+    # covers virtually every chat answer while capping the worst case.
+    num_predict: int = 512
 
     def _resolved_tag(self) -> str:
         from dequorum.inference.models import DEFAULT_BASE_MODEL_ID, resolve_ollama_tag
 
         return resolve_ollama_tag(self.model or DEFAULT_BASE_MODEL_ID)
+
+    def _options(self) -> dict:
+        return {"temperature": 0.0, "num_predict": self.num_predict}
 
     def complete(self, system: str, user: str) -> str:
         payload = {
@@ -43,7 +51,7 @@ class OllamaBaseModel:
                 {"role": "user", "content": user},
             ],
             "stream": False,
-            "options": {"temperature": 0.0},
+            "options": self._options(),
             # Keep the model resident in VRAM across requests. Default
             # is 5 minutes; pinning at 30m means a paused user doesn't
             # pay the model-load cost on their next message.
@@ -80,7 +88,7 @@ class OllamaBaseModel:
                 {"role": "user", "content": user},
             ],
             "stream": True,
-            "options": {"temperature": 0.0},
+            "options": self._options(),
             "keep_alive": "30m",
         }
         req = request.Request(

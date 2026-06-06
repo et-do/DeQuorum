@@ -41,3 +41,33 @@ def test_missing_data_raises() -> None:
     node = _Lookup({"a": "alpha"})
     with pytest.raises(MissingData):
         node.query("z")
+
+
+def test_signature_verifies_with_matching_public_key() -> None:
+    from dequorum.core.crypto import public_key_for
+
+    sig = Signature.sign(
+        node_id="n", signing_key=b"secret", payload={"x": 1}, result="r"
+    )
+    assert sig.verify(public_key_for(b"secret")) is True
+    assert sig.verify(public_key_for(b"other-secret")) is False
+
+
+def test_tampered_signature_fails_verify() -> None:
+    from dataclasses import replace
+
+    from dequorum.core.crypto import public_key_for
+
+    sig = Signature.sign(node_id="n", signing_key=b"secret", payload=1, result=2)
+    pk = public_key_for(b"secret")
+    assert sig.verify(pk) is True
+    # Flipping any signed field invalidates the signature.
+    assert replace(sig, output_hash="deadbeef").verify(pk) is False
+    assert replace(sig, node_id="m").verify(pk) is False
+
+
+def test_covers_detects_content_change() -> None:
+    sig = Signature.sign(node_id="n", signing_key=b"k", payload={"x": 1}, result="r")
+    assert sig.covers(payload={"x": 1}, result="r") is True
+    assert sig.covers(payload={"x": 2}, result="r") is False
+    assert sig.covers(payload={"x": 1}, result="r2") is False

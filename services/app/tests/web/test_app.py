@@ -123,6 +123,40 @@ def test_submit_then_vote_flow(client: TestClient) -> None:
     assert any(c["contribution_id"] == contribution_id for c in r.json())
 
 
+def test_contribution_is_publicly_verifiable(client: TestClient) -> None:
+    """A submitted contribution can be verified by anyone, with no auth and
+    no secret — Ed25519 signature valid + content intact. This is the
+    in-app realization of the whitepaper's verifiable-attribution claim."""
+    r = client.post(
+        "/v1/contributions",
+        json={
+            "primary_category_id": "programming/python/typing",
+            "text": "typing.assert_type asserts a value's inferred static type.",
+            "citations": ["https://docs.python.org/3/library/typing.html"],
+        },
+    )
+    assert r.status_code == 201, r.text
+    contribution_id = r.json()["contribution_id"]
+
+    # No Authorization needed — verification is public by design.
+    v = client.get(f"/v1/contributions/{contribution_id}/verify")
+    assert v.status_code == 200, v.text
+    body = v.json()
+    assert body["algorithm"] == "Ed25519"
+    assert body["content_intact"] is True
+    assert body["signature_valid"] is True
+    assert body["verified"] is True
+    # The public key is returned so a third party can re-run the check
+    # independently of this operator.
+    assert len(bytes.fromhex(body["public_key_hex"])) == 32
+    assert len(bytes.fromhex(body["signature_hex"])) == 64
+
+
+def test_verify_unknown_contribution_404(client: TestClient) -> None:
+    r = client.get("/v1/contributions/does-not-exist/verify")
+    assert r.status_code == 404
+
+
 def test_self_voting_returns_400(client: TestClient) -> None:
     """A contributor voting on their own submission gets rejected. The
     voter_id is derived from the signed-in user (here the dependency-

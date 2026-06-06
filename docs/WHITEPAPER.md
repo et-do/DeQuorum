@@ -244,6 +244,10 @@ This matters at three different scales:
 - **Per-contribution**: an external auditor can trace a contribution from submission through triage through vote to its current `LIVE` status, with every reviewer's signature.
 - **Per-distillation**: when a contribution makes it into a LoRA adapter or a full retraining cycle, the cryptographic lineage from contributor to model weight is preserved in the network's ledger.
 
+This is implemented, not aspirational. Contributions are signed with **Ed25519** (`cryptography` lib; signatures over the BLAKE2b hashes of the canonical payload), and the API exposes `GET /v1/contributions/{id}/verify`, which rebuilds the signed payload from stored fields and reports two independent checks: **content integrity** (the stored text still hashes to the signed payload and id) and **signature validity** (the Ed25519 signature verifies against the contributor's published public key). The endpoint is unauthenticated and returns the public key and signature, so a third party can re-run the check without trusting this operator. Tampering with either the stored content or the signature fails verification (see §8.5).
+
+> **Honest scope of the current guarantee.** Today a contributor's key is derived server-side from their authenticated identity, so what is *cryptographically* guaranteed right now is (a) content integrity and (b) that a signature is internally consistent and publicly checkable against the published key. Because the operator can currently re-derive a key, the stronger "the operator cannot forge a contribution" property is **not** yet delivered — that requires client-held keys (WebCrypto), which is the roadmap step (§9) that closes the gap. We state this explicitly rather than imply non-custodial signing the code does not yet do.
+
 ---
 
 ## 5. Economics: the kickback model
@@ -416,7 +420,40 @@ This is the safety-relevant axis. A vanilla foundation model has no principled m
 
 The economic interpretation of refusal is non-trivial. In a query-billed network, the operator earns nothing from a refused query. The system therefore has a structural incentive *not* to refuse — and yet, by design, it does. This is the same alignment pressure that makes "calibrated confidence" hard for closed-model operators; DeQuorum encodes it directly in the routing math.
 
-### 8.5 Limits of the current evaluation
+### 8.5 Claim 4 — Attribution is cryptographically verifiable
+
+The accountability thesis (§1, §4.2) only holds if attribution is *checkable*, not asserted. This claim is validated by construction rather than by a benchmark: it is a property of the signing code, exercised by the test suite.
+
+| Property | Test | Result |
+| --- | --- | --- |
+| A valid contribution verifies against the contributor's published Ed25519 key | `test_contribution_is_publicly_verifiable` (web), `test_verify_succeeds_with_contributor_public_key` | `verified = true` |
+| Editing stored content after signing is detected | `test_verify_fails_when_content_tampered` | `content_intact = false` |
+| A signature does not verify under the wrong / a forged key | `test_verify_rejects_wrong_key`, `test_signature_verifies_with_matching_public_key` | rejected |
+| A mutated signature field is rejected | `test_tampered_signature_fails_verify` | rejected |
+
+The verification path is live in the application: `GET /v1/contributions/{id}/verify` is unauthenticated and returns `content_intact`, `signature_valid`, the contributor's `public_key_hex`, and the `signature_hex`. Anyone can therefore re-derive the result independently of the operator — the property that distinguishes "signed" from "verifiable." Signatures are Ed25519 (64 bytes) over BLAKE2b hashes of the canonical payload; the public key is 32 bytes and travels with the contributor record.
+
+What this does **not** yet prove is forgery-resistance against the operator itself: as noted in §4.2, keys are server-derived today, so this validates integrity + public checkability, not non-custodial signing. That is the one open item on this claim (§8.7).
+
+### 8.6 Claim 5 — Contribution value is measurable, and the payout is gaming-resistant
+
+This is the claim that turns the economics (§5) from an assertion into a mechanism. The naive ledger credits every cited contribution **equally** — which is both unfaithful (it says nothing about which contribution actually mattered) and trivially gameable. The open research question is: *given an answer and its proof chain, how much did each contribution actually cause the answer, and can that credit be gamed?*
+
+**The measure.** For each retrieved contribution $d$, we run a leave-one-out ablation: regenerate the answer with $d$ removed and measure how much the answer's resemblance to $d$'s content drops. That drop is $d$'s **marginal value** — content present *because $d$ was there*. Credit weights normalize marginal values to a share of 1, and payouts (§5) are distributed by that weight rather than per-citation. Reproducible with `dequorum attribution-bench`; per-query credit is written to [docs/benchmarks/attribution.md](benchmarks/attribution.md). On the seed corpus (10 queries, 28 contribution–answer pairs, Qwen 2.5 Coder 7B) the measured **Spearman(retrieval score, marginal value) = −0.12** — retrieval score does *not* predict a contribution's causal value. That is the empirical core of the finding: neither retrieval score nor flat citation count is an acceptable payout proxy, so the leave-one-out measure is necessary, not merely nicer. (Small-N and illustrative, per §8.7.)
+
+Two properties are established by construction and proven in the test suite (`tests/attribution/test_marginal.py`):
+
+| Property | Result |
+| --- | --- |
+| **Faithfulness gap.** Flat per-citation credit is constant, so it has *zero* rank-correlation with measured marginal value — it carries no information about which contribution mattered. Marginal value does. | by construction |
+| **Faithful crediting.** A contribution whose content grounds the answer receives strictly more credit than an irrelevant one retrieved alongside it. | `test_relevant_contribution_outscores_irrelevant` |
+| **Gaming resistance.** Submitting a near-duplicate **inflates** a contributor's share under flat credit (2/3 vs 1/2) but **cannot** under marginal credit — the duplicate carries ~0 marginal value. | `test_duplicate_stuffing_does_not_inflate_marginal_share` |
+
+**Why it's novel.** Data-valuation (data-Shapley, influence functions) is well studied for *training*; faithful, gaming-resistant attribution for *RAG-grounded generation* — where the proof chain makes the credited set explicit — is not. DeQuorum is uniquely positioned to study it because it owns the full pipeline and the signed proof chain. This is also where the research finding and the user value coincide: the metric *is* the contributor's paycheck.
+
+**Honest limit.** Leave-one-out under-credits content that is genuinely valuable but redundant with a sibling contribution (each looks removable because the other covers it). The principled fix is a Shapley-style average over coalitions (exponential; approximable) — future work (§8.8). The current seed-corpus correlation is also small-N and illustrative, not a population estimate.
+
+### 8.7 Limits of the current evaluation
 
 The results above are real, but the evaluation is small and the caveats should be loud:
 
@@ -425,8 +462,9 @@ The results above are real, but the evaluation is small and the caveats should b
 - **Judgement was manual.** The qualitative pattern in §8.3 is a single reviewer's read of the three conditions side-by-side. We do not yet have an automated correctness judge (LLM-as-judge has its own bias issues; a stricter benchmark with held-out human-written answers is the right next step).
 - **The routing threshold is now data-driven but the sweep is still coarse.** $\tau_R = 0.30$ was picked from a 4-point sweep (§8.2.1) over N=127. A finer sweep with a held-out validation set and an actual ROC curve is the next step; the current pick is the lowest threshold that achieves 0% OOD leak on the tested distribution, which may be more aggressive than necessary on a wider distribution.
 - **The training tier (§3.5) is not yet validated.** No LoRA adapter has been trained against the contribution corpus. That experiment requires accumulating ~$10^4$ approved contributions in one category — the threshold the math predicts. We do not have that data yet.
+- **Key custody is server-side.** §8.5's verification is genuine (integrity + public checkability), but contributor keys are derived server-side from the authenticated identity today. Until keys are held client-side (WebCrypto), the operator could in principle re-derive a key and forge a contribution — so the "no trust in the operator" claim is, for now, scoped to verification, not to signing custody.
 
-### 8.6 Next experiments
+### 8.8 Next experiments
 
 The benchmark harness is structured to support, in order:
 
@@ -435,6 +473,7 @@ The benchmark harness is structured to support, in order:
 3. **Hybrid retrieval ablation.** Implement §3.4's BM25 + dense + cross-encoder pipeline (the retrieval formalism above); report dense-only vs hybrid vs hybrid+rerank on the same question set.
 4. **LoRA distillation.** Once any category clears $10^4$ approved contributions, train a per-category adapter and measure (a) accuracy on retrieval-suppressed queries, (b) latency improvement, (c) catastrophic-forgetting metrics on unrelated categories.
 5. **Cross-encoder judge.** Build an automated correctness scorer with held-out gold answers per question, so §8.3's qualitative table becomes a numeric one.
+6. **Shapley-approximate attribution.** Replace leave-one-out marginal value (§8.6) with a sampled Shapley estimate so genuinely-valuable-but-redundant contributions are credited fairly, and measure faithfulness against the cross-encoder judge.
 
 Each experiment is independently shippable; results land in [docs/benchmarks/](benchmarks/) as they complete and are reflected in subsequent revisions of this paper.
 
@@ -443,6 +482,7 @@ Each experiment is independently shippable; results land in [docs/benchmarks/](b
 ## 9. Roadmap
 
 ### 0–6 months — Pipeline depth
+- Client-held signing keys (WebCrypto): move key custody off the server so contribution/vote signatures are non-custodial, closing the forgery gap noted in §8.6.
 - Phase 2 of governance: triage stage, with reviewer comment + edit-request workflow.
 - Hybrid retrieval (sparse + dense + cross-encoder rerank) replacing pure dense ANN.
 - Structured logging of every `(query, retrieval, answer)` interaction as training data for later distillation.

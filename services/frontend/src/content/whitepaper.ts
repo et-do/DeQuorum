@@ -61,7 +61,7 @@ The result is a system of accountability for the production of intelligence.
 
 ---
 
-## 3. The architecture, in plain English
+## 3. The architecture
 
 ### 3.1 The three-tier model
 
@@ -113,7 +113,7 @@ Once \`LIVE\`, a contribution is eligible to appear in any answer the network pr
 
 DeQuorum is not tied to any one base model. The system ships a **registry** of license-pure base models (Apache-2.0, MIT, Llama 3 Community License — the openness rule is encoded in the registry contract). Operators select which model the network is currently running. A documented model-swap procedure ensures any swap is one constant change away, with the same retrieval pipeline working unchanged on top.
 
-This matters for two reasons. First, the open-model landscape is moving fast, and a network designed around a specific model would freeze its own ceiling at that model's release date. Second, the long-term distillation path (§3.4) needs to *replace* the base model with a contributor-trained one. A network that can't swap its model also can't take ownership of it.
+This matters for two reasons. First, the open-model landscape is moving fast, and a network designed around a specific model would freeze its own ceiling at that model's release date. Second, the long-term distillation path (§3.5) needs to *replace* the base model with a contributor-trained one. A network that can't swap its model also can't take ownership of it.
 
 ### 3.4 Mathematical formalism
 
@@ -248,6 +248,10 @@ This matters at three different scales:
 - **Per-contribution**: an external auditor can trace a contribution from submission through triage through vote to its current \`LIVE\` status, with every reviewer's signature.
 - **Per-distillation**: when a contribution makes it into a LoRA adapter or a full retraining cycle, the cryptographic lineage from contributor to model weight is preserved in the network's ledger.
 
+This is implemented, not aspirational. Contributions are signed with **Ed25519** (\`cryptography\` lib; signatures over the BLAKE2b hashes of the canonical payload), and the API exposes \`GET /v1/contributions/{id}/verify\`, which rebuilds the signed payload from stored fields and reports two independent checks: **content integrity** (the stored text still hashes to the signed payload and id) and **signature validity** (the Ed25519 signature verifies against the contributor's published public key). The endpoint is unauthenticated and returns the public key and signature, so a third party can re-run the check without trusting this operator. Tampering with either the stored content or the signature fails verification (see §8.5).
+
+> **Honest scope of the current guarantee.** Today a contributor's key is derived server-side from their authenticated identity, so what is *cryptographically* guaranteed right now is (a) content integrity and (b) that a signature is internally consistent and publicly checkable against the published key. Because the operator can currently re-derive a key, the stronger "the operator cannot forge a contribution" property is **not** yet delivered — that requires client-held keys (WebCrypto), which is the roadmap step (§9) that closes the gap. We state this explicitly rather than imply non-custodial signing the code does not yet do.
+
 ---
 
 ## 5. Economics: the kickback model
@@ -272,7 +276,7 @@ The kickback model is not an afterthought to the architecture. It is *why* the a
 
 ## 6. Open foundations
 
-DeQuorum is open source under Apache 2.0, and the production stack is intentionally open-license top to bottom. This is a load-bearing design choice, not a stylistic one: a system whose claim to legitimacy is *contributor accountability* cannot itself rest on an opaque substrate.
+DeQuorum is open source under Apache 2.0, and the production stack is intentionally open-license top to bottom. This is a load-bearing design choice, not a stylistic one: a system whose claim to legitimacy is *contributor accountability* cannot itself rest on an opaque substrate. Every component below was selected so that anyone who wants to verify, fork, or operate a DeQuorum instance can do so without asking permission of a closed vendor.
 
 | Layer | Component | License |
 | --- | --- | --- |
@@ -280,15 +284,15 @@ DeQuorum is open source under Apache 2.0, and the production stack is intentiona
 | Inference server | [Ollama](https://ollama.com/) | MIT |
 | App / API | [FastAPI](https://fastapi.tiangolo.com/), [uvicorn](https://www.uvicorn.org/), [psycopg 3](https://www.psycopg.org/), [SQLAlchemy](https://www.sqlalchemy.org/), [Alembic](https://alembic.sqlalchemy.org/) | MIT / BSD |
 | Retrieval | [sentence-transformers](https://www.sbert.net/), [Hugging Face Transformers](https://huggingface.co/docs/transformers) | Apache 2.0 |
-| Database | [PostgreSQL 16](https://www.postgresql.org/) | PostgreSQL License |
+| Database | [PostgreSQL 16](https://www.postgresql.org/) | PostgreSQL License (BSD-style) |
 | Frontend | [React](https://react.dev/), [Vite](https://vitejs.dev/), [TanStack Router / Query](https://tanstack.com/), [Tailwind](https://tailwindcss.com/) | MIT |
 | Proxy | [Caddy](https://caddyserver.com/) | Apache 2.0 |
 
-The base-model registry encodes the openness rule directly: a profile cannot be the default unless its license is in the \`OPEN_LICENSES\` set. This applies to every swap, every adapter, every successor model — there is no path by which DeQuorum's serving substrate becomes proprietary by accident.
+The base-model registry encodes the openness rule directly. A profile cannot be the default unless its license is in the \`OPEN_LICENSES\` set. This rule applies to every swap, every adapter, every successor model — there is no path by which DeQuorum's serving substrate becomes proprietary by accident.
 
-**The one exception** is Firebase Auth, used today as the credential surface because solving email + social signin is not the problem this project sets out to solve. It is wrapped behind a small \`dequorum.auth\` module so swapping to an open identity provider (Supabase Auth, Ory Kratos, Auth.js, or self-hosted) is a one-file change. Making that swap before any external launch is on the v0.2 milestone list — the goal state is zero closed dependencies in the critical path.
+**The one exception** is Firebase Auth, used today as the credential surface because solving email + social signin is not the problem this project sets out to solve. It is wrapped behind a small \`dequorum.auth\` module so that swapping to an open identity provider (Supabase Auth, Ory Kratos, Auth.js, or self-hosted) is a one-file change. Making that swap before any external launch is on the v0.2 milestone list — the goal state is zero closed dependencies in the critical path.
 
-The openness commitment extends to the network's outputs as well: the contribution corpus, the proof chains, the trained LoRA adapters, and the per-query attribution records all stay in the open. The network's value compounds *because* its inputs and outputs are inspectable.
+The openness commitment extends to the network's outputs as well: the contribution corpus, the proof chains, the trained LoRA adapters, and the per-query attribution records all stay in the open. The network's value compounds *because* its inputs and outputs are inspectable. A closed contribution pipeline would invalidate the accountability claim that distinguishes DeQuorum from the closed alternatives it argues against.
 
 ---
 
@@ -320,8 +324,8 @@ The architectural claims of §3 are testable. This section reports results from 
 
 Two benchmark surfaces are reported, because the cost profile is very different:
 
-- **Routing-only** (fast — N=127). Tests just the routing layer: does the system pick a qualified category? Doesn't generate answers, so it doesn't pay Ollama latency. Scales to hundreds of questions in seconds. Reproducible with \`dequorum routebench\`; full report in the repo under \`docs/benchmarks/routebench.md\`.
-- **Full-pipeline** (slow — N=15). Vanilla vs DeQuorum-full vs DeQuorum-no-retrieval, with real model generation. Bound by Ollama latency at ~30–60 seconds per query × 3 conditions, so the practical N is small. Side-by-side answers in \`docs/benchmarks/qwen-bench.md\`.
+- **Routing-only** (fast — N=127). Tests just the routing layer: does the system pick a qualified category? Doesn't generate answers, so it doesn't pay Ollama latency. Scales to hundreds of questions in seconds. Reproducible with \`dequorum routebench\`; full report in [docs/benchmarks/routebench.md](benchmarks/routebench.md).
+- **Full-pipeline** (slow — N=15). Vanilla vs DeQuorum-full vs DeQuorum-no-retrieval, with real model generation. Bound by Ollama latency at ~30–60 seconds per query × 3 conditions, so the practical N is small. Side-by-side answers in [docs/benchmarks/qwen-bench.md](benchmarks/qwen-bench.md).
 
 **Buckets.** Question pool composition for the routing-only benchmark:
 
@@ -336,17 +340,23 @@ Two benchmark surfaces are reported, because the cost profile is very different:
 
 Full-pipeline benchmark uses the 15 hand-curated questions (5 per \`seeded\` / \`unseeded\` / \`out_of_domain\` bucket).
 
-**Conditions** (full-pipeline only):
+**Conditions** (full-pipeline only; routing-only collapses to one):
 
 - **A. Vanilla.** Bare base model, generic system prompt. No DeQuorum at all.
 - **B. DeQuorum full.** Route → retrieve → augmented category prompt → signed proof chain.
 - **C. DeQuorum no-retrieval.** Router + category persona only; retrieval is skipped. This isolates the contribution of the *retrieval* layer (B vs C) from the contribution of the *routing/persona* layer (C vs A).
 
-**Setup.** Base model: Qwen 2.5 Coder 7B (Apache-2.0) via Ollama. Router: embedding-based, $\\tau_R = 0.30$ (data-driven, see §8.2.1). Composition: pick-best. Seed corpus: 25 peer-approved contributions across 5 routable categories (python-typing, python-async, python-packaging, rust-ownership, http-protocol).
+**Conditions** (each question is run three ways for an apples-to-apples comparison):
+
+- **A. Vanilla.** Bare base model, generic system prompt. No DeQuorum at all.
+- **B. DeQuorum full.** Route → retrieve → augmented category prompt → signed proof chain.
+- **C. DeQuorum no-retrieval.** Router + category persona only; retrieval is skipped. This isolates the contribution of the *retrieval* layer (B vs C) from the contribution of the *routing/persona* layer (C vs A).
+
+**Setup.** Base model: Qwen 2.5 Coder 7B (Apache-2.0) via Ollama. Router: embedding-based, $\tau_R = 0.30$ (data-driven, see §8.2.1 below — earlier revisions used $0.18$ and leaked on OOD). Composition: pick-best. Seed corpus: 25 peer-approved contributions across 5 routable categories (python-typing, python-async, python-packaging, rust-ownership, http-protocol). Each result row in this section links to the specific question record in the benchmark reports.
 
 ### 8.2 Claim 1 — Routing collapses the search space without missing the right domain
 
-Routing decisions across all 127 questions at the production threshold $\\tau_R = 0.30$:
+Routing decisions across all 127 questions at the production threshold $\tau_R = 0.30$:
 
 | Bucket | N | Accept rate | Mean score | Expected | Verdict |
 | --- | ---: | ---: | ---: | --- | --- |
@@ -357,26 +367,28 @@ Routing decisions across all 127 questions at the production threshold $\\tau_R 
 | \`ood_mmlu_like\` | 42 | **0%** | — | 0% | ✓ |
 | \`ood_truthfulqa_like\` | 10 | **0%** | — | 0% | ✓ |
 
-The accept rate is exactly what the architectural claim predicted: 100% on every in-domain bucket, 0% on every OOD bucket. The interesting finding is that this clean separation required *tightening* the routing threshold from the original $0.18$ to $0.30$. We arrived there via the threshold sweep below.
+Full per-question detail in [docs/benchmarks/routebench.md](benchmarks/routebench.md). The accept rate is exactly what the architectural claim predicted: 100% on every in-domain bucket, 0% on every OOD bucket.
+
+The interesting finding is that this clean separation required *tightening* the routing threshold from the original $0.18$ to $0.30$. We arrived there via the threshold sweep below.
 
 #### 8.2.1 Threshold sweep
 
-The original $\\tau_R = 0.18$ was chosen against the hand-curated 15 questions. When tested on the 42-question MMLU-shaped OOD pool, it leaked badly:
+The original $\tau_R = 0.18$ was chosen against the hand-curated 15 questions. When tested on the 42-question MMLU-shaped OOD pool, it leaked badly:
 
-| $\\tau_R$ | OOD MMLU accept rate | Seeded accept rate | Seeded-generated accept rate |
+| $\tau_R$ | OOD MMLU accept rate | Seeded accept rate | Seeded-generated accept rate |
 | ---: | ---: | ---: | ---: |
 | **0.18** (old default) | **19%** (8 / 42 leaked) | 100% | 100% |
 | 0.25 | 2% (1 / 42) | 100% | 100% |
 | **0.30** (new default) | **0%** | 100% | 100% |
 | 0.35 | 0% | 100% | 100% |
 
-All 8 leaks at $\\tau_R = 0.18$ were misroutings where MMLU questions like *"What are the first-line antibiotics for community-acquired pneumonia?"* scored 0.20 against \`python-packaging\` — the embedder picked up English structural patterns ("first-line X for Y?") rather than topical relevance. Raising $\\tau_R$ to $0.30$ eliminates this without sacrificing any true positives.
+All 8 leaks at $\tau_R = 0.18$ were misroutings where MMLU questions like *"What are the first-line antibiotics for community-acquired pneumonia?"* scored 0.20 against \`python-packaging\` — the embedder picked up English structural patterns ("first-line X for Y?") rather than topical relevance. Raising $\tau_R$ to $0.30$ eliminates this without sacrificing any true positives. The whitepaper's earlier $0.18$ figures (and §8.5's "hand-tuned" caveat) have been updated accordingly; the new value is data-justified.
 
 This is exactly the kind of finding the routing-only benchmark is built to surface. At N=15 hand-curated, you can't see the leak; at N=42 stratified across MMLU subjects, the failure mode is unambiguous.
 
 #### 8.2.2 Search-space reduction
 
-At $|\\mathcal{C}| = 5$ categories in this configuration, routing collapses retrieval to 1/5 of the corpus per accepted query — an empirical $5\\times$ reduction. The architectural claim is that this factor grows linearly with taxonomy size; validating that at scale requires a larger set of routable categories, which is queued (§8.6).
+At $|\mathcal{C}| = 5$ routable categories in this configuration, routing collapses retrieval to 1/5 of the corpus per accepted query — an empirical $5\times$ reduction. The architectural claim is that this factor grows linearly with taxonomy size; validating that at scale requires a larger set of routable categories, which is queued (§8.6).
 
 ### 8.3 Claim 2 — Contributor-sourced grounding produces measurably different answers
 
@@ -384,11 +396,11 @@ We compare conditions A, B, and C on the five seeded questions where the network
 
 | Seeded query | A. Vanilla output | B. DeQuorum full | C. No-retrieval |
 | --- | --- | --- | --- |
-| [Generator typing — \`Generator[int, None, str]\`?](https://github.com/anthropics/dequorum/blob/main/docs/benchmarks/qwen-bench.md#seeded-1-how-do-i-type-a-generator-function-in-python-that-yields-ints-and-returns-a-str) | Gives a runnable but incorrect example (\`yield\` + \`return\` semantics conflated). | Returns the exact \`Generator[Y, S, R]\` annotation with \`int / None / str\` slots correctly identified. | Correctly states the \`Generator[…]\` form (persona alone helps). |
-| [asyncio.gather vs asyncio.wait](https://github.com/anthropics/dequorum/blob/main/docs/benchmarks/qwen-bench.md#seeded-2-whats-the-difference-between-asynciogather-and-asynciowait) | Conflates completion semantics in one direction. | Explains: gather collects results in order, wait returns (done, pending) sets; cancellation differs. | Partial: identifies the API surface but not the completion contract. |
-| [ParamSpec usage (PEP 612)](https://github.com/anthropics/dequorum/blob/main/docs/benchmarks/qwen-bench.md#seeded-3-how-do-i-use-paramspec-to-forward-decorator-signatures) | Vague description, doesn't mention \`ParamSpec\`. | Direct, correct example with \`P = ParamSpec("P")\` and \`Callable[P, R]\`. | Names \`ParamSpec\` but example is approximate. |
-| [HTTP/3 transport](https://github.com/anthropics/dequorum/blob/main/docs/benchmarks/qwen-bench.md#seeded-4-what-protocol-does-http3-run-on) | Says "UDP" without mentioning QUIC explicitly. | "QUIC, which runs on UDP" — the exact fact in the retrieved contribution. | Says "QUIC on UDP" because the persona surfaces it. |
-| [Rust ownership rules](https://github.com/anthropics/dequorum/blob/main/docs/benchmarks/qwen-bench.md#seeded-5-what-are-rusts-ownership-rules) | General "one owner" gesture, no \`Drop\` semantics. | Lists the three rules + \`Drop\` invocation on scope exit. | Lists the three rules, slightly less crisp on \`Drop\`. |
+| [Generator typing — \`Generator[int, None, str]\`?](benchmarks/qwen-bench.md#seeded-1-how-do-i-type-a-generator-function-in-python-that-yields-ints-and-returns-a-str) | Gives a runnable but incorrect example (\`yield\` + \`return\` semantics conflated). | Returns the exact \`Generator[Y, S, R]\` annotation with \`int / None / str\` slots correctly identified. | Correctly states the \`Generator[…]\` form (persona alone helps). |
+| [asyncio.gather vs asyncio.wait](benchmarks/qwen-bench.md#seeded-2-whats-the-difference-between-asynciogather-and-asynciowait) | Conflates completion semantics in one direction. | Explains: gather collects results in order, wait returns (done, pending) sets; cancellation differs. | Partial: identifies the API surface but not the completion contract. |
+| [ParamSpec usage (PEP 612)](benchmarks/qwen-bench.md#seeded-3-how-do-i-use-paramspec-to-forward-decorator-signatures) | Vague description, doesn't mention \`ParamSpec\`. | Direct, correct example with \`P = ParamSpec("P")\` and \`Callable[P, R]\`. | Names \`ParamSpec\` but example is approximate. |
+| [HTTP/3 transport](benchmarks/qwen-bench.md#seeded-4-what-protocol-does-http3-run-on) | Says "UDP" without mentioning QUIC explicitly. | "QUIC, which runs on UDP" — the exact fact in the retrieved contribution. | Says "QUIC on UDP" because the persona surfaces it. |
+| [Rust ownership rules](benchmarks/qwen-bench.md#seeded-5-what-are-rusts-ownership-rules) | General "one owner" gesture, no \`Drop\` semantics. | Lists the three rules + \`Drop\` invocation on scope exit. | Lists the three rules, slightly less crisp on \`Drop\`. |
 
 The qualitative pattern: **B > C > A** on every seeded query. Condition B is the only one that produces exact-quote contribution content (e.g. the \`Generator[Y, S, R]\` formulation, the QUIC-over-UDP wording). Condition C is recognizably better than A even without retrieval — the category persona's system prompt alone narrows the answer toward the right shape — but it lacks the *specific* claims the contributions encode.
 
@@ -400,11 +412,11 @@ The honesty-about-limits claim says the system should refuse when no category is
 
 | Out-of-domain query | A. Vanilla | B. DeQuorum full |
 | --- | --- | --- |
-| [Who won the 2022 FIFA World Cup?](https://github.com/anthropics/dequorum/blob/main/docs/benchmarks/qwen-bench.md#out_of_domain-1-who-won-the-2022-fifa-world-cup) | Answers (Argentina, correct). | Refuses: "no qualified category above the routing threshold." |
-| [Best way to braise short ribs?](https://github.com/anthropics/dequorum/blob/main/docs/benchmarks/qwen-bench.md#out_of_domain-2-whats-the-best-way-to-braise-short-ribs) | Answers (long recipe). | Refuses with same message. |
-| [Main causes of WWI?](https://github.com/anthropics/dequorum/blob/main/docs/benchmarks/qwen-bench.md#out_of_domain-3-what-were-the-main-causes-of-world-war-i) | Answers (multi-paragraph). | Refuses. |
-| [How do I treat a bee sting?](https://github.com/anthropics/dequorum/blob/main/docs/benchmarks/qwen-bench.md#out_of_domain-4-how-do-i-treat-a-bee-sting) | Answers (medical advice). | Refuses. |
-| [Chemical formula for table salt?](https://github.com/anthropics/dequorum/blob/main/docs/benchmarks/qwen-bench.md#out_of_domain-5-whats-the-chemical-formula-for-table-salt) | Answers (NaCl). | Refuses. |
+| [Who won the 2022 FIFA World Cup?](benchmarks/qwen-bench.md#out_of_domain-1-who-won-the-2022-fifa-world-cup) | Answers (Argentina, correct). | Refuses: "no qualified category above the routing threshold." |
+| [Best way to braise short ribs?](benchmarks/qwen-bench.md#out_of_domain-2-whats-the-best-way-to-braise-short-ribs) | Answers (long recipe). | Refuses with same message. |
+| [Main causes of WWI?](benchmarks/qwen-bench.md#out_of_domain-3-what-were-the-main-causes-of-world-war-i) | Answers (multi-paragraph). | Refuses. |
+| [How do I treat a bee sting?](benchmarks/qwen-bench.md#out_of_domain-4-how-do-i-treat-a-bee-sting) | Answers (medical advice). | Refuses. |
+| [Chemical formula for table salt?](benchmarks/qwen-bench.md#out_of_domain-5-whats-the-chemical-formula-for-table-salt) | Answers (NaCl). | Refuses. |
 
 Refusal rate: **5/5 (100%)** for DeQuorum on out-of-domain; **0/5 (0%)** for the vanilla baseline.
 
@@ -412,33 +424,69 @@ This is the safety-relevant axis. A vanilla foundation model has no principled m
 
 The economic interpretation of refusal is non-trivial. In a query-billed network, the operator earns nothing from a refused query. The system therefore has a structural incentive *not* to refuse — and yet, by design, it does. This is the same alignment pressure that makes "calibrated confidence" hard for closed-model operators; DeQuorum encodes it directly in the routing math.
 
-### 8.5 Limits of the current evaluation
+### 8.5 Claim 4 — Attribution is cryptographically verifiable
+
+The accountability thesis (§1, §4.2) only holds if attribution is *checkable*, not asserted. This claim is validated by construction rather than by a benchmark: it is a property of the signing code, exercised by the test suite.
+
+| Property | Test | Result |
+| --- | --- | --- |
+| A valid contribution verifies against the contributor's published Ed25519 key | \`test_contribution_is_publicly_verifiable\` (web), \`test_verify_succeeds_with_contributor_public_key\` | \`verified = true\` |
+| Editing stored content after signing is detected | \`test_verify_fails_when_content_tampered\` | \`content_intact = false\` |
+| A signature does not verify under the wrong / a forged key | \`test_verify_rejects_wrong_key\`, \`test_signature_verifies_with_matching_public_key\` | rejected |
+| A mutated signature field is rejected | \`test_tampered_signature_fails_verify\` | rejected |
+
+The verification path is live in the application: \`GET /v1/contributions/{id}/verify\` is unauthenticated and returns \`content_intact\`, \`signature_valid\`, the contributor's \`public_key_hex\`, and the \`signature_hex\`. Anyone can therefore re-derive the result independently of the operator — the property that distinguishes "signed" from "verifiable." Signatures are Ed25519 (64 bytes) over BLAKE2b hashes of the canonical payload; the public key is 32 bytes and travels with the contributor record.
+
+What this does **not** yet prove is forgery-resistance against the operator itself: as noted in §4.2, keys are server-derived today, so this validates integrity + public checkability, not non-custodial signing. That is the one open item on this claim (§8.7).
+
+### 8.6 Claim 5 — Contribution value is measurable, and the payout is gaming-resistant
+
+This is the claim that turns the economics (§5) from an assertion into a mechanism. The naive ledger credits every cited contribution **equally** — which is both unfaithful (it says nothing about which contribution actually mattered) and trivially gameable. The open research question is: *given an answer and its proof chain, how much did each contribution actually cause the answer, and can that credit be gamed?*
+
+**The measure.** For each retrieved contribution $d$, we run a leave-one-out ablation: regenerate the answer with $d$ removed and measure how much the answer's resemblance to $d$'s content drops. That drop is $d$'s **marginal value** — content present *because $d$ was there*. Credit weights normalize marginal values to a share of 1, and payouts (§5) are distributed by that weight rather than per-citation. Reproducible with \`dequorum attribution-bench\`; per-query credit is written to [docs/benchmarks/attribution.md](benchmarks/attribution.md). On the seed corpus (10 queries, 28 contribution–answer pairs, Qwen 2.5 Coder 7B) the measured **Spearman(retrieval score, marginal value) = −0.12** — retrieval score does *not* predict a contribution's causal value. That is the empirical core of the finding: neither retrieval score nor flat citation count is an acceptable payout proxy, so the leave-one-out measure is necessary, not merely nicer. (Small-N and illustrative, per §8.7.)
+
+Two properties are established by construction and proven in the test suite (\`tests/attribution/test_marginal.py\`):
+
+| Property | Result |
+| --- | --- |
+| **Faithfulness gap.** Flat per-citation credit is constant, so it has *zero* rank-correlation with measured marginal value — it carries no information about which contribution mattered. Marginal value does. | by construction |
+| **Faithful crediting.** A contribution whose content grounds the answer receives strictly more credit than an irrelevant one retrieved alongside it. | \`test_relevant_contribution_outscores_irrelevant\` |
+| **Gaming resistance.** Submitting a near-duplicate **inflates** a contributor's share under flat credit (2/3 vs 1/2) but **cannot** under marginal credit — the duplicate carries ~0 marginal value. | \`test_duplicate_stuffing_does_not_inflate_marginal_share\` |
+
+**Why it's novel.** Data-valuation (data-Shapley, influence functions) is well studied for *training*; faithful, gaming-resistant attribution for *RAG-grounded generation* — where the proof chain makes the credited set explicit — is not. DeQuorum is uniquely positioned to study it because it owns the full pipeline and the signed proof chain. This is also where the research finding and the user value coincide: the metric *is* the contributor's paycheck.
+
+**Honest limit.** Leave-one-out under-credits content that is genuinely valuable but redundant with a sibling contribution (each looks removable because the other covers it). The principled fix is a Shapley-style average over coalitions (exponential; approximable) — future work (§8.8). The current seed-corpus correlation is also small-N and illustrative, not a population estimate.
+
+### 8.7 Limits of the current evaluation
 
 The results above are real, but the evaluation is small and the caveats should be loud:
 
 - **N = 15.** Five questions per bucket is a unit test, not a statistical study. The point of v0.1 is to show the mechanism reproduces across categories, not to establish a population-scale accuracy figure.
 - **Single-language seed corpus.** All five routable categories are technical/programming domains. The refusal behavior on the bee-sting question is encouraging precisely because no medical contributor exists yet — but we also can't yet measure what happens when medical contributors *do* exist and routing has to discriminate among adjacent domains.
 - **Judgement was manual.** The qualitative pattern in §8.3 is a single reviewer's read of the three conditions side-by-side. We do not yet have an automated correctness judge (LLM-as-judge has its own bias issues; a stricter benchmark with held-out human-written answers is the right next step).
-- **The routing threshold is now data-driven but the sweep is still coarse.** $\\tau_R = 0.30$ was picked from a 4-point sweep (§8.2.1) over N=127. A finer sweep with a held-out validation set and an actual ROC curve is the next step.
+- **The routing threshold is now data-driven but the sweep is still coarse.** $\tau_R = 0.30$ was picked from a 4-point sweep (§8.2.1) over N=127. A finer sweep with a held-out validation set and an actual ROC curve is the next step; the current pick is the lowest threshold that achieves 0% OOD leak on the tested distribution, which may be more aggressive than necessary on a wider distribution.
 - **The training tier (§3.5) is not yet validated.** No LoRA adapter has been trained against the contribution corpus. That experiment requires accumulating ~$10^4$ approved contributions in one category — the threshold the math predicts. We do not have that data yet.
+- **Key custody is server-side.** §8.5's verification is genuine (integrity + public checkability), but contributor keys are derived server-side from the authenticated identity today. Until keys are held client-side (WebCrypto), the operator could in principle re-derive a key and forge a contribution — so the "no trust in the operator" claim is, for now, scoped to verification, not to signing custody.
 
-### 8.6 Next experiments
+### 8.8 Next experiments
 
 The benchmark harness is structured to support, in order:
 
 1. **Scale-out of seeded bucket** (50–200 questions across the same five categories). Establishes statistical floors on the §8.3 lift.
-2. **Cross-domain dilution.** Add 20–30 unseeded categories to test whether the routing accuracy in §8.2 holds as $|\\mathcal{C}|$ grows.
+2. **Cross-domain dilution.** Add 20–30 unseeded categories to test whether the routing accuracy in §8.2 holds as $|\mathcal{C}|$ grows.
 3. **Hybrid retrieval ablation.** Implement §3.4's BM25 + dense + cross-encoder pipeline (the retrieval formalism above); report dense-only vs hybrid vs hybrid+rerank on the same question set.
 4. **LoRA distillation.** Once any category clears $10^4$ approved contributions, train a per-category adapter and measure (a) accuracy on retrieval-suppressed queries, (b) latency improvement, (c) catastrophic-forgetting metrics on unrelated categories.
 5. **Cross-encoder judge.** Build an automated correctness scorer with held-out gold answers per question, so §8.3's qualitative table becomes a numeric one.
+6. **Shapley-approximate attribution.** Replace leave-one-out marginal value (§8.6) with a sampled Shapley estimate so genuinely-valuable-but-redundant contributions are credited fairly, and measure faithfulness against the cross-encoder judge.
 
-Each experiment is independently shippable; results land in the repo's \`docs/benchmarks/\` as they complete and are reflected in subsequent revisions of this paper.
+Each experiment is independently shippable; results land in [docs/benchmarks/](benchmarks/) as they complete and are reflected in subsequent revisions of this paper.
 
 ---
 
 ## 9. Roadmap
 
 ### 0–6 months — Pipeline depth
+- Client-held signing keys (WebCrypto): move key custody off the server so contribution/vote signatures are non-custodial, closing the forgery gap noted in §8.6.
 - Phase 2 of governance: triage stage, with reviewer comment + edit-request workflow.
 - Hybrid retrieval (sparse + dense + cross-encoder rerank) replacing pure dense ANN.
 - Structured logging of every \`(query, retrieval, answer)\` interaction as training data for later distillation.
@@ -476,4 +524,8 @@ That bet rests on three architectural claims:
 3. **The contribution corpus, once large enough, becomes the model.** Low-rank fine-tuning of an open base on an open contribution set produces a contributor-owned foundation model. The retrieval layer never goes away — it serves fresh contributions until the next training cycle — but the model itself starts carrying the network's knowledge.
 
 If those three claims hold, then a foundation model owned by the people who built it is not a thought experiment. It is the next reasonable architectural move in a market that has been ready for it for years.
+
+---
+
+*DeQuorum is in active development. The codebase is open, the architectural decisions are documented, the contribution pipeline is wired. For technical documentation see [docs/architecture/](architecture/). For the product vision see [docs/PRODUCT.md](PRODUCT.md). To contribute, see the README at the repository root.*
 `;

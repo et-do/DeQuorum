@@ -70,7 +70,12 @@ class AppConfig:
         )
     )
     use_mock: bool = False
-    ollama_model: str = ""
+    # DEQUORUM_OLLAMA_MODEL lets an environment pin a specific tag/id
+    # (e.g. compose sets the snappier 3B for local CPU dev); empty falls
+    # back to DEFAULT_BASE_MODEL_ID from inference/models.py.
+    ollama_model: str = field(
+        default_factory=lambda: os.environ.get("DEQUORUM_OLLAMA_MODEL", "")
+    )
     # Honor DEQUORUM_OLLAMA_HOST so compose's "http://ollama:11434" reaches
     # the app. Falls back to localhost for standalone `dequorum serve`.
     ollama_host: str = field(
@@ -543,6 +548,55 @@ def create_app() -> FastAPI:
             "votes": votes,
         }
 
+    @app.get("/v1/contributions/{contribution_id}/verify", tags=["contributions"])
+    def verify_contribution(contribution_id: str = Path(...)) -> dict:
+        """Publicly verify a contribution's signed attribution.
+
+        Deliberately unauthenticated: the whole point of the proof chain is
+        that *anyone* can confirm a claim's authorship and integrity using
+        only public data. Two independent checks are reported:
+          - content_intact: the stored text/metadata still hashes to the
+            signed payload and contribution_id (storage hasn't been altered).
+          - signature_valid: the Ed25519 signature verifies against the
+            contributor's published public key (the holder of the private
+            key authored exactly this).
+        Neither requires any secret, so the result does not rest on trusting
+        the operator.
+        """
+        with open_contribution_store() as store:
+            c = store.get(contribution_id)
+            if c is None:
+                raise HTTPException(404, "contribution not found")
+        with open_identity_store() as istore:
+            contributor = istore.get(c.contributor_id)
+        if contributor is None:
+            return {
+                "contribution_id": contribution_id,
+                "contributor_id": c.contributor_id,
+                "algorithm": "Ed25519",
+                "content_intact": c.signature.covers(
+                    payload=c.signed_payload(), result=c.contribution_id
+                ),
+                "signature_valid": False,
+                "verified": False,
+                "reason": "signer public key not on file",
+            }
+        public_key = contributor.public_key
+        content_intact = c.signature.covers(
+            payload=c.signed_payload(), result=c.contribution_id
+        )
+        signature_valid = c.signature.verify(public_key)
+        return {
+            "contribution_id": contribution_id,
+            "contributor_id": c.contributor_id,
+            "public_key_hex": public_key.hex(),
+            "signature_hex": c.signature.digest,
+            "algorithm": "Ed25519",
+            "content_intact": content_intact,
+            "signature_valid": signature_valid,
+            "verified": content_intact and signature_valid,
+        }
+
     @app.post("/v1/contributions", tags=["contributions"], status_code=201)
     def submit_contribution(
         payload: dict = Body(...),
@@ -560,6 +614,13 @@ def create_app() -> FastAPI:
         # derives the same contributor_id the voting endpoint would,
         # so self-vote detection works without a registry lookup.
         contributor, signing_key = commenter_record_for_uid(user.uid, user.display_name)
+
+        # Publish the contributor's public key (idempotent upsert) so their
+        # contributions are independently verifiable via GET .../verify —
+        # without a published key on file there is nothing to check a
+        # signature against.
+        with open_identity_store() as istore:
+            istore.add(contributor)
 
         embedder = _embedder()
         with open_contribution_store() as store, open_category_store() as cat_store:

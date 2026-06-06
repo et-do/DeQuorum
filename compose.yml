@@ -48,9 +48,12 @@ services:
     pull_policy: missing
     entrypoint: ["/entrypoint.sh"]
     environment:
-      # Keep this aligned with DEFAULT_BASE_MODEL_ID's ollama_tag in
-      # services/app/src/dequorum/inference/models.py.
-      OLLAMA_BOOTSTRAP_MODEL: "qwen2.5-coder:7b"
+      # Local dev pulls the 3B model — on CPU it's ~2x faster than the 7B
+      # and keeps chat responsive. Prod stays on DEFAULT_BASE_MODEL_ID
+      # (7B) from services/app/src/dequorum/inference/models.py; the app
+      # is pointed at this tag via DEQUORUM_OLLAMA_MODEL below. Keep this
+      # tag and the app's DEQUORUM_OLLAMA_MODEL in sync.
+      OLLAMA_BOOTSTRAP_MODEL: "qwen2.5-coder:3b"
       # GIN_MODE=release silences Ollama's per-request access log lines
       # (`[GIN] ... | 200 | ... | "/api/tags"`). Errors still surface.
       GIN_MODE: "release"
@@ -92,6 +95,10 @@ services:
       # `ollama` hostname instead of the localhost default that would 404
       # from inside the app container).
       DEQUORUM_OLLAMA_HOST: "http://ollama:11434"
+      # Use the snappier 3B model locally (CPU-only dev). Must match the
+      # ollama service's OLLAMA_BOOTSTRAP_MODEL tag above. Unset in prod so
+      # the app falls back to DEFAULT_BASE_MODEL_ID (7B).
+      DEQUORUM_OLLAMA_MODEL: "qwen2.5-coder:3b"
       # Firebase emulator. Picked up automatically by the Firebase SDK when
       # this env var is set; cleared/unset in production to hit real Firebase.
       FIREBASE_AUTH_EMULATOR_HOST: "auth:9099"

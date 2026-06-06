@@ -45,3 +45,23 @@ def test_signature_changes_with_key() -> None:
     )
     assert a.contribution_id == b.contribution_id
     assert a.signature.digest != b.signature.digest
+
+
+def test_verify_succeeds_with_contributor_public_key() -> None:
+    from dequorum.core.crypto import public_key_for
+
+    c = _make()
+    assert c.verify(public_key_for(b"async-key")) is True
+    assert c.verify(public_key_for(b"someone-else")) is False
+
+
+def test_verify_fails_when_content_tampered() -> None:
+    from dataclasses import replace
+
+    from dequorum.core.crypto import public_key_for
+
+    c = _make()
+    pk = public_key_for(b"async-key")
+    # Editing the stored text after signing breaks content integrity, so
+    # verification fails even though the signature itself is untouched.
+    assert replace(c, text="a malicious rewrite").verify(pk) is False

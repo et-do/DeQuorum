@@ -866,6 +866,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "firebase-admin" },
     { name = "numpy" },
@@ -914,6 +915,7 @@ vector = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.13" },
     { name = "chromadb", marker = "extra == 'vector'", specifier = ">=1.5" },
+    { name = "cryptography", specifier = ">=44" },
     { name = "discopy", marker = "extra == 'experimental'", specifier = ">=1.2" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "firebase-admin", specifier = ">=6.5" },

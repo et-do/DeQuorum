@@ -24,6 +24,11 @@ dependencies = [
     # Database
     "psycopg[binary,pool]>=3.3.4",
     "alembic>=1.13",
+    # Ed25519 signing/verification for the contribution proof chain. Public-key
+    # signatures are what make attribution verifiable without trusting the
+    # operator — load-bearing, so declared directly rather than relied on
+    # transitively.
+    "cryptography>=44",
     # Auth — verify Firebase ID tokens (uses FIREBASE_AUTH_EMULATOR_HOST
     # automatically in dev; falls back to a Google credentials lookup in
     # production).

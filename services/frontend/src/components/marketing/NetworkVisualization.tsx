@@ -832,7 +832,7 @@ export function NetworkVisualization({ className }: { className?: string }) {
 				ref={canvasRef}
 				role="presentation"
 				aria-hidden="true"
-				className="block h-full w-full text-fg min-h-[320px]"
+				className="block h-full w-full text-fg min-h-[220px]"
 			/>
 			<ActivityLabels story={currentStory} step={currentStep} />
 		</div>
@@ -935,7 +935,7 @@ function Label({ slot, text }: { slot: "tl" | "tr" | "br" | "bl"; text: string |
 	return (
 		<div
 			className={cn(
-				"absolute max-w-[18rem] border border-border-strong bg-bg/95 px-3 py-2 text-sm font-medium leading-snug text-fg backdrop-blur shadow-sm sm:text-base",
+				"absolute max-w-[11rem] border border-border-strong bg-bg/95 px-2.5 py-1.5 text-xs font-medium leading-snug text-fg backdrop-blur shadow-sm sm:text-sm",
 				"transition-all duration-500 ease-out",
 				SLOT_CLASSES[slot],
 				shown ? "opacity-100 translate-y-0" : "opacity-0",

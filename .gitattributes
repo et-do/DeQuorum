@@ -1,2 +1,20 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Force LF for all text files, in the repo and on checkout, on every
+# platform. `eol=lf` (not bare `text=auto`) is what stops CRLF creeping in
+# from Windows/WSL checkouts — which previously broke the ollama shell
+# entrypoint (exec format) and tripped yamllint.
+* text=auto eol=lf
+
+# Binary files git must never line-ending-normalize.
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary

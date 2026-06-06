@@ -234,6 +234,32 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_database_url_arg(routebench)
 
+    attrib = sub.add_parser(
+        "attribution-bench",
+        help="Measure leave-one-out contribution attribution vs retrieval score",
+    )
+    attrib.add_argument("--mock", action="store_true", help="Use mock model")
+    attrib.add_argument(
+        "--model",
+        default=None,
+        help="Model id from inference/models.py registry, or raw Ollama tag.",
+    )
+    attrib.add_argument("--host", default="http://localhost:11434", help="Ollama host")
+    attrib.add_argument(
+        "--router", choices=("keyword", "embedding"), default="embedding"
+    )
+    attrib.add_argument("--min-score", type=float, default=None)
+    attrib.add_argument("--retrieve-top-k", type=int, default=3)
+    attrib.add_argument(
+        "--limit", type=int, default=None, help="Run only the first N questions"
+    )
+    attrib.add_argument(
+        "--output",
+        default="docs/benchmarks/attribution.md",
+        help="Where to write the Markdown report",
+    )
+    _add_database_url_arg(attrib)
+
     db = sub.add_parser("db", help="Database management commands")
     db_sub = db.add_subparsers(dest="db_cmd", required=True)
     db_upgrade = db_sub.add_parser("upgrade", help="Run Alembic migrations to head")
@@ -445,14 +471,14 @@ def _cmd_signup(args: argparse.Namespace) -> int:
     _bootstrap(args)
     _ensure_seeded()
     import hashlib
-    import secrets
+
+    from dequorum.core.crypto import generate_signing_key, public_key_for
 
     if args.seed_key:
-        priv = args.seed_key.encode().ljust(32, b"\x00")[:32]
-        pub = b"pubkey-from-seed-" + priv[:8]
+        priv = args.seed_key.encode()
     else:
-        priv = secrets.token_bytes(32)
-        pub = hashlib.blake2b(priv, digest_size=32).digest()
+        priv = generate_signing_key()
+    pub = public_key_for(priv)
 
     email_hash = None
     if args.email:
@@ -732,6 +758,68 @@ def _cmd_routebench(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_attribution_bench(args: argparse.Namespace) -> int:
+    """Measure leave-one-out contribution attribution across the seed corpus
+    and report how well retrieval score predicts measured causal value."""
+    _bootstrap(args)
+    _ensure_seeded()
+
+    from dequorum.benchmark import SEED_QUESTIONS
+    from dequorum.benchmark.attribution import (
+        run_attribution_benchmark,
+        write_attribution_report,
+    )
+
+    with open_category_store() as cs:
+        categories = tuple(cs.routable())
+    router = _build_router(categories, args.router, args.min_score)
+    embedder = SentenceTransformerEmbedder()
+
+    if args.mock:
+        model: MockBaseModel | OllamaBaseModel = MockBaseModel()
+        model_label = "mock"
+    else:
+        from dequorum.inference.models import DEFAULT_BASE_MODEL_ID, resolve_ollama_tag
+
+        # Shorter generations + a generous timeout: the attribution measure
+        # only needs the answer's content, and CPU inference of (k+1)
+        # generations per query is slow.
+        model = OllamaBaseModel(
+            model=args.model or "",
+            host=args.host,
+            timeout_seconds=300.0,
+            num_predict=192,
+        )
+        model_label = resolve_ollama_tag(args.model or DEFAULT_BASE_MODEL_ID)
+
+    questions = SEED_QUESTIONS if args.limit is None else SEED_QUESTIONS[: args.limit]
+
+    def progress(i: int, total: int, text: str) -> None:
+        print(f"  [{i}/{total}] {text[:80]}", flush=True)
+
+    print(f"Running attribution-bench over {len(questions)} questions...")
+    with open_contribution_store() as store:
+        report = run_attribution_benchmark(
+            questions=questions,
+            router=router,
+            store=store,
+            model=model,
+            embedder=embedder,
+            retrieve_top_k=args.retrieve_top_k,
+            progress=progress,
+        )
+    report.model_label = model_label
+
+    output_path = Path(args.output)
+    write_attribution_report(report, output_path)
+    print(f"\nReport written: {output_path}")
+    print(
+        f"queries={len(report.rows)} pairs={report.n_pairs} "
+        f"spearman(score,value)={report.spearman_score_vs_value:.3f}"
+    )
+    return 0
+
+
 def _cmd_db(args: argparse.Namespace) -> int:
     url = _resolve_database_url(args.database_url)
     if args.db_cmd == "upgrade":
@@ -781,6 +869,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_benchmark(args)
     if args.cmd == "routebench":
         return _cmd_routebench(args)
+    if args.cmd == "attribution-bench":
+        return _cmd_attribution_bench(args)
     if args.cmd == "db":
         return _cmd_db(args)
     return 2

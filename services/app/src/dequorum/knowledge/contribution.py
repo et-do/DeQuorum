@@ -22,6 +22,33 @@ from dequorum.core.node import Signature
 UNCATEGORIZED_ID: Final[str] = "uncategorized"
 
 
+def _signed_payload(
+    *,
+    contributor_id: str,
+    primary_category_id: str,
+    text: str,
+    citations: tuple[str, ...],
+    lineage_id: str,
+    version_number: int,
+    parent_version: int | None,
+) -> dict:
+    """The canonical payload that a contribution's id and signature cover.
+
+    Single source of truth shared by `create()` (which signs it) and
+    `signed_payload()` (which a verifier rebuilds from stored fields), so
+    the two can never drift out of sync.
+    """
+    return {
+        "contributor_id": contributor_id,
+        "primary_category_id": primary_category_id,
+        "text": text,
+        "citations": list(citations),
+        "lineage_id": lineage_id,
+        "version_number": version_number,
+        "parent_version": parent_version,
+    }
+
+
 @dataclass(frozen=True, slots=True)
 class Contribution:
     """One version of a signed factual claim.
@@ -71,15 +98,15 @@ class Contribution:
                 )[:16]
             )
 
-        payload = {
-            "contributor_id": contributor_id,
-            "primary_category_id": primary_category_id,
-            "text": text,
-            "citations": list(citations),
-            "lineage_id": lineage_id,
-            "version_number": version_number,
-            "parent_version": parent_version,
-        }
+        payload = _signed_payload(
+            contributor_id=contributor_id,
+            primary_category_id=primary_category_id,
+            text=text,
+            citations=citations,
+            lineage_id=lineage_id,
+            version_number=version_number,
+            parent_version=parent_version,
+        )
         contribution_id = digest(canonical_bytes(payload))
         sig = Signature.sign(
             node_id=contributor_id,
@@ -123,3 +150,28 @@ class Contribution:
             version_number=self.version_number + 1,
             parent_version=self.version_number,
         )
+
+    def signed_payload(self) -> dict:
+        """Rebuild the exact payload this contribution's id + signature cover,
+        from stored fields only. Used to verify content integrity."""
+        return _signed_payload(
+            contributor_id=self.contributor_id,
+            primary_category_id=self.primary_category_id,
+            text=self.text,
+            citations=self.citations,
+            lineage_id=self.lineage_id,
+            version_number=self.version_number,
+            parent_version=self.parent_version,
+        )
+
+    def verify(self, public_key: bytes) -> bool:
+        """True iff this contribution is authentic and intact, using only
+        public data: (1) the stored content still hashes to the signed
+        payload and contribution_id, and (2) the signature is a valid
+        Ed25519 signature by the holder of `public_key`. This is the
+        per-claim realization of the whitepaper's verifiable-attribution
+        claim — no secret, no trust in the operator's storage."""
+        payload = self.signed_payload()
+        return self.signature.covers(
+            payload=payload, result=self.contribution_id
+        ) and self.signature.verify(public_key)

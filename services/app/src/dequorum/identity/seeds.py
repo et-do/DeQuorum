@@ -7,18 +7,23 @@ one or more expert personas via the contributor_experts M:N table.
 
 from __future__ import annotations
 
+from dequorum.core.crypto import public_key_for
 from dequorum.identity.agreement import current_agreement
 from dequorum.identity.contributor import Contributor, Tier
 from dequorum.identity.store import IdentityStore
 
 
-def _seed_public_key(slug: str) -> bytes:
-    """Pseudo-public-key: deterministic but unique per slug. Real signups use WebCrypto."""
-    return f"dev-seed-pubkey-{slug}".encode().ljust(32, b"\x00")[:32]
-
-
 def _seed_private_key(slug: str) -> bytes:
+    """Deterministic per-slug signing-key material. Same slug → same key, so
+    seed contributors are reconstructible from anywhere. Real signups mint a
+    random key (and will hold it client-side via WebCrypto)."""
     return f"dev-seed-key-{slug}".encode()
+
+
+def _seed_public_key(slug: str) -> bytes:
+    """The real Ed25519 public key derived from the slug's signing material —
+    so signatures from seed contributors actually verify against it."""
+    return public_key_for(_seed_private_key(slug))
 
 
 SEED_CONTRIBUTOR_SLUGS: tuple[str, ...] = (
