@@ -29,7 +29,9 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          # Match the frontend image's base (services/frontend/Dockerfile,
+          # node:26-alpine) so CI tests the runtime we actually ship.
+          node-version: "26"
 
       - name: Install dependencies
         run: |
