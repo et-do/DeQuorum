@@ -16,7 +16,7 @@
         {
             "label": "compose: logs (follow all services)",
             "type": "shell",
-            "command": "docker compose logs -f --tail=200",
+            "command": "docker compose logs -f",
             "options": { "cwd": "${workspaceFolder}" },
             "presentation": {
                 "panel": "dedicated",
