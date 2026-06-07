@@ -21,6 +21,7 @@ import numpy as np
 
 from dequorum.attribution import ContributionCredit, measure_attribution
 from dequorum.benchmark.questions import BenchmarkQuestion
+from dequorum.eval import Judge, gold_for
 from dequorum.inference.base_model import BaseModel
 from dequorum.retrieval import Retriever
 from dequorum.routing.embedder import Embedder
@@ -40,6 +41,11 @@ class AttributionReport:
     n_pairs: int
     spearman_score_vs_value: float
     mean_marginal: float
+    # Faithfulness: how the cheap embedding marginal and the retrieval score
+    # each track an independent judge-measured quality delta. NaN if no judge.
+    n_judge_pairs: int = 0
+    spearman_embed_vs_judge: float = float("nan")
+    spearman_score_vs_judge: float = float("nan")
 
 
 def _avg_ranks(a: np.ndarray) -> np.ndarray:
@@ -75,6 +81,7 @@ def run_attribution_benchmark(
     store: object,
     model: BaseModel,
     embedder: Embedder,
+    judge: Judge | None = None,
     retrieve_top_k: int = 3,
     progress: Callable[[int, int, str], None] | None = None,
 ) -> AttributionReport:
@@ -91,12 +98,21 @@ def run_attribution_benchmark(
         if len(retrieved) < 2:
             # marginal attribution is only meaningful with ≥2 contributions
             continue
+
+        gold = gold_for(q.text)
+        score_answer: Callable[[str], float] | None = None
+        if judge is not None and gold:
+
+            def score_answer(ans: str, _q: str = q.text, _g: tuple = gold) -> float:
+                return judge.score(query=_q, answer=ans, reference=_g)
+
         credits = measure_attribution(
             query=q.text,
             persona_prompt=category.system_prompt,
             retrieved=retrieved,
             model=model,
             embedder=embedder,
+            score_answer=score_answer,
         )
         rows.append(AttributionRow(q.text, category.category_id, credits))
         if progress:
@@ -104,6 +120,16 @@ def run_attribution_benchmark(
 
     scores = np.array([c.retrieval_score for r in rows for c in r.credits])
     values = np.array([c.marginal_value for r in rows for c in r.credits])
+    # Judge faithfulness pairs (only contributions that were judge-scored).
+    j_triples = [
+        (c.retrieval_score, c.marginal_value, c.judge_marginal)
+        for r in rows
+        for c in r.credits
+        if c.judge_marginal is not None
+    ]
+    j_score = np.array([t[0] for t in j_triples])
+    j_embed = np.array([t[1] for t in j_triples])
+    j_judge = np.array([t[2] for t in j_triples])
     return AttributionReport(
         model_label="",
         rows=rows,
@@ -112,6 +138,13 @@ def run_attribution_benchmark(
             _spearman(scores, values) if len(scores) else float("nan")
         ),
         mean_marginal=float(values.mean()) if len(values) else float("nan"),
+        n_judge_pairs=len(j_triples),
+        spearman_embed_vs_judge=(
+            _spearman(j_embed, j_judge) if len(j_triples) else float("nan")
+        ),
+        spearman_score_vs_judge=(
+            _spearman(j_score, j_judge) if len(j_triples) else float("nan")
+        ),
     )
 
 
@@ -134,6 +167,20 @@ def write_attribution_report(report: AttributionReport, path: Path) -> None:
         "- Flat credit (the naive ledger) is constant per citation, so by "
         "construction it has **zero** rank correlation with measured value — it "
         "carries no information about which contribution mattered.",
+        "",
+        "## Faithfulness: does the cheap measure track real answer quality?",
+        "",
+        "Independent ground truth is a judge-measured quality delta (gold-fact "
+        "recall with the contribution removed). We correlate it against both the "
+        "embedding marginal and the retrieval score.",
+        "",
+        f"- Judge-scored pairs: {report.n_judge_pairs}",
+        f"- **Spearman(embedding_marginal, judge_marginal) = "
+        f"{report.spearman_embed_vs_judge:.3f}** "
+        "(higher ⇒ the cheap measure is faithful to real quality impact)",
+        f"- Spearman(retrieval_score, judge_marginal) = "
+        f"{report.spearman_score_vs_judge:.3f} "
+        "(near-zero ⇒ retrieval score is not a value proxy)",
         "",
         "## Per-query credit",
         "",

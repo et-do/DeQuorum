@@ -17,9 +17,11 @@ from dequorum.attribution.marginal import (
     distribute_pool,
     measure_attribution,
 )
+from dequorum.attribution.shapley import shapley_attribution
 
 __all__ = [
     "ContributionCredit",
     "distribute_pool",
     "measure_attribution",
+    "shapley_attribution",
 ]

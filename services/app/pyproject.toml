@@ -52,6 +52,12 @@ vector = [
 notebook = [
     "ipykernel>=6.29",
 ]
+# LoRA distillation PoC (dequorum distill-poc). Kept optional so the serving
+# image doesn't carry training deps. transformers comes via sentence-transformers.
+distill = [
+    "peft>=0.19",
+    "accelerate>=1.0",
+]
 experimental = [
     # Symbolic math for deterministic/algebraic reasoning
     "sympy>=1.13",

@@ -81,7 +81,7 @@ flowchart BT
 
 **Routing** picks which domain (or domains) the question concerns. A taxonomy of categories — the same taxonomy contributions are filed under — collapses the search space by 100×–1000×. A medical question never reaches the legal partition; a Python question never reaches the macroeconomics partition.
 
-**Retrieval** finds the relevant contributions within the routed partition. The system combines three complementary signals:
+**Retrieval** finds the relevant contributions within the routed partition. The retrieval design combines three complementary signals (the lexical signal is the implemented baseline; see §3.4):
 
 1. *Sparse* (BM25) retrieval, which catches exact-keyword matches that embeddings miss: entity names, identifiers, numbers, version strings.
 2. *Dense* (vector ANN) retrieval, which catches paraphrase and conceptual similarity.
@@ -146,6 +146,8 @@ $$
 $$
 
 where $\|$ denotes concatenation. The base model's generation conditions on this concatenation; the proof chain (§4.2) records the elements of $R_K(q)$ as the contributions that grounded the answer.
+
+The scoring stack above defines the retrieval design. The present implementation instantiates the lexical scorer $s_{\text{sparse}}$ together with the governance filter; the dense and cross-encoder stages are specified here as the design's intended form. The interface to the rest of the system is identical in either case — a governed top-$K$ set $R_K(q)$ that feeds both the prompt and the proof chain — so the results of §8 are independent of which scorers are active.
 
 **Tier 3 — training.** Given a corpus $\mathcal{D}_c^{\text{live}}$ of approved contributions in category $c$, the system constructs training pairs $(q_i, a_i)_{i=1}^N$ by (a) sampling existing query–answer logs whose retrieval intersected $\mathcal{D}_c^{\text{live}}$, and (b) synthesizing question-like prompts from each $d \in \mathcal{D}_c^{\text{live}}$ via a templated inverse. A LoRA adapter is then fine-tuned on the base model $M$.
 
@@ -216,9 +218,9 @@ flowchart LR
 
 Three side flows attach:
 
-- **Comments** (Phase 1, shipped) thread under every contribution. Triage rationale, review discussion, post-acceptance clarifications all use the same model.
-- **Edit requests** (Phase 3, planned) are PR-style proposed changes. A reviewer drafts a new version of the contribution and submits it as a suggestion. The original author accepts (creating a new lineage version with attribution preserved) or declines.
-- **Public activity feed** (Phase 4, planned) surfaces what's being submitted, triaged, voted, and accepted across the network, building external credibility and giving non-contributing users something to read while the agent is the main draw.
+- **Comments** thread under every contribution; triage rationale, review discussion, and post-acceptance clarification share one signed comment model.
+- **Edit requests** are pull-request-style proposed changes: a reviewer drafts a new version and submits it as a suggestion, which the original author accepts — creating a new lineage version with attribution preserved — or declines.
+- A **public activity feed** surfaces submissions, triage, votes, and acceptances across the network, both as external evidence of the governance process and as a reading surface for non-contributing users.
 
 ### 4.1 Tier-weighted voting
 
@@ -244,9 +246,9 @@ This matters at three different scales:
 - **Per-contribution**: an external auditor can trace a contribution from submission through triage through vote to its current `LIVE` status, with every reviewer's signature.
 - **Per-distillation**: when a contribution makes it into a LoRA adapter or a full retraining cycle, the cryptographic lineage from contributor to model weight is preserved in the network's ledger.
 
-This is implemented, not aspirational. Contributions are signed with **Ed25519** (`cryptography` lib; signatures over the BLAKE2b hashes of the canonical payload), and the API exposes `GET /v1/contributions/{id}/verify`, which rebuilds the signed payload from stored fields and reports two independent checks: **content integrity** (the stored text still hashes to the signed payload and id) and **signature validity** (the Ed25519 signature verifies against the contributor's published public key). The endpoint is unauthenticated and returns the public key and signature, so a third party can re-run the check without trusting this operator. Tampering with either the stored content or the signature fails verification (see §8.5).
+This is realized in the implementation. Contributions are signed with Ed25519 over the BLAKE2b hash of the canonical payload, and the API exposes `GET /v1/contributions/{id}/verify`, which rebuilds the signed payload from stored fields and reports two independent checks: content integrity (the stored text still hashes to the signed payload and identifier) and signature validity (the signature verifies against the contributor's published public key). The endpoint is unauthenticated and returns the public key and signature, so a third party can reproduce the check without trusting the operator; altering either the stored content or the signature causes verification to fail. The empirical treatment is in §8.5.
 
-> **Honest scope of the current guarantee.** Today a contributor's key is derived server-side from their authenticated identity, so what is *cryptographically* guaranteed right now is (a) content integrity and (b) that a signature is internally consistent and publicly checkable against the published key. Because the operator can currently re-derive a key, the stronger "the operator cannot forge a contribution" property is **not** yet delivered — that requires client-held keys (WebCrypto), which is the roadmap step (§9) that closes the gap. We state this explicitly rather than imply non-custodial signing the code does not yet do.
+The scope of this guarantee is bounded by key custody. Contributor keys are at present derived server-side from the authenticated identity, so the scheme guarantees content integrity and public checkability against the published key, but not resistance to forgery by the operator, which could re-derive a key. Non-custodial signing with client-held keys is required for that stronger property and is on the roadmap (§9). We state the boundary explicitly rather than imply a guarantee the implementation does not yet provide.
 
 ---
 
@@ -267,6 +269,27 @@ When a query against the network earns money — through subscription, per-query
 The exact split is governance-tunable. The principle is fixed: **every role that contributed to the answer is named on the ledger.** Payouts use conventional rails (Stripe ACH at modest scale; the protocol is payment-rail-agnostic). A contributor whose contribution is cited in 100,000 queries receives a real, calculated payout — not a "thanks for your contribution" badge.
 
 The kickback model is not an afterthought to the architecture. It is *why* the architecture is structured the way it is. The cryptographic signatures, the proof chain, the lineage tracking — all of these are load-bearing for revenue distribution. The audit trail that an end user uses to verify an answer is the same audit trail that the ledger uses to compute payouts. There is no separate "monetization layer" because the entire system is the monetization layer.
+
+### 5.1 Unit economics
+
+A redistribution model is only credible if the underlying query is profitable enough to redistribute from. We therefore separate two things the §5 split conflates: the *real costs* the network must cover (compute, paid to a host; fixed infrastructure, paid to the operator) and the *redistribution* the model exists to deliver (the contributor, reviewer, and treasury shares). The network is viable only when each role's revenue share covers its real cost; the remainder is what actually reaches the people who supplied the knowledge.
+
+The model below is per answered query, and every figure is an explicit input. The reference point uses a ~7B open model on commodity GPU pricing, a typical grounded prompt, and a modest per-query price:
+
+| Quantity | Value | Basis |
+| --- | ---: | --- |
+| Tokens (in / out) | 1500 / 300 | persona + 3 contributions + question; short answer |
+| Inference cost | \$0.00014 | \$0.05 / \$0.20 per 1M input/output tokens |
+| Infra cost / query | \$0.00040 | \$400/month over 1M queries |
+| **Total real cost** | **\$0.00056** | inference + infra + a \$0.00002 embedding call |
+| Revenue / query | \$0.01000 | per-query price (or subscription-amortized) |
+| Host margin | +\$0.00234 | 25% share − compute |
+| Operator margin | +\$0.00110 | 15% share − infra |
+| **To contributors** | **\$0.00400** | 40% share — **\$4.00 per 1,000 cited queries** |
+
+Two results matter for the proof-of-concept. First, at this price point the model **closes**: both cost-bearing roles run a positive margin and roughly \$6 of every \$10 in revenue is redistributed to knowledge providers, with \$4 reaching contributors directly. Second, viability is **volume-dependent** — fixed infrastructure dominates at low query counts, and the break-even price (the lowest price at which the host and operator shares still cover their real costs) is ≈ \$0.0027 per query at one million queries per month but rises sharply below that. The economic claim is therefore conditional, not unconditional: the kickback model is sound *at scale and at a defensible price*, and the model makes the exact threshold explicit rather than assumed.
+
+The sensitivities that move the result most are the output-token count and the served model size (both scale inference cost), and query volume (which amortizes fixed infra). All are inputs to `dequorum cost-model`, so the analysis can be re-run against measured production figures as they become available.
 
 ---
 
@@ -314,13 +337,13 @@ The closest comparable in spirit is Wikipedia, but Wikipedia famously has no eco
 
 ## 8. Experimental validation
 
-The architectural claims of §3 are testable. This section reports results from the v0.1 benchmark harness, with three intentionally separated buckets and three intentionally separated conditions. Reading order: experimental design first, then results per claim, then an honest accounting of limits.
+The architectural claims of §3 are testable, and this section reports the results, organized as experimental design, results per claim, and limitations. Every experiment is reproducible from the reference implementation; the exact commands and full per-item records are in [docs/benchmarks/](benchmarks/), and the construction-level properties are encoded as deterministic tests. Results are reported at the scale the present seed corpus and inference budget allow; sample sizes are stated throughout and their consequences discussed in §8.8.
 
 ### 8.1 Experimental design
 
 Two benchmark surfaces are reported, because the cost profile is very different:
 
-- **Routing-only** (fast — N=127). Tests just the routing layer: does the system pick a qualified category? Doesn't generate answers, so it doesn't pay Ollama latency. Scales to hundreds of questions in seconds. Reproducible with `dequorum routebench`; full report in [docs/benchmarks/routebench.md](benchmarks/routebench.md).
+- **Routing-only** (fast — N=127). Tests just the routing layer: does the system pick a qualified category? Doesn't generate answers, so it doesn't pay Ollama latency. Scales to hundreds of questions in seconds; full report in [docs/benchmarks/routebench.md](benchmarks/routebench.md).
 - **Full-pipeline** (slow — N=15). Vanilla vs DeQuorum-full vs DeQuorum-no-retrieval, with real model generation. Bound by Ollama latency at ~30–60 seconds per query × 3 conditions, so the practical N is small. Side-by-side answers in [docs/benchmarks/qwen-bench.md](benchmarks/qwen-bench.md).
 
 **Buckets.** Question pool composition for the routing-only benchmark:
@@ -348,7 +371,7 @@ Full-pipeline benchmark uses the 15 hand-curated questions (5 per `seeded` / `un
 - **B. DeQuorum full.** Route → retrieve → augmented category prompt → signed proof chain.
 - **C. DeQuorum no-retrieval.** Router + category persona only; retrieval is skipped. This isolates the contribution of the *retrieval* layer (B vs C) from the contribution of the *routing/persona* layer (C vs A).
 
-**Setup.** Base model: Qwen 2.5 Coder 7B (Apache-2.0) via Ollama. Router: embedding-based, $\tau_R = 0.30$ (data-driven, see §8.2.1 below — earlier revisions used $0.18$ and leaked on OOD). Composition: pick-best. Seed corpus: 25 peer-approved contributions across 5 routable categories (python-typing, python-async, python-packaging, rust-ownership, http-protocol). Each result row in this section links to the specific question record in the benchmark reports.
+**Setup.** Base model: Qwen 2.5 Coder 7B (Apache-2.0) via Ollama. Router: embedding-based with acceptance threshold $\tau_R = 0.30$, selected by the sweep in §8.2.1. Composition: pick-best. Seed corpus: 25 peer-approved contributions across five routable categories (python-typing, python-async, python-packaging, rust-ownership, http-protocol). Each result row links to the corresponding question record in the benchmark reports.
 
 ### 8.2 Claim 1 — Routing collapses the search space without missing the right domain
 
@@ -369,26 +392,34 @@ The interesting finding is that this clean separation required *tightening* the 
 
 #### 8.2.1 Threshold sweep
 
-The original $\tau_R = 0.18$ was chosen against the hand-curated 15 questions. When tested on the 42-question MMLU-shaped OOD pool, it leaked badly:
+A threshold tuned against the 15 hand-curated questions alone ($\tau_R = 0.18$) leaks on the 42-question MMLU-shaped out-of-domain pool. Sweeping $\tau_R$ locates the operating point:
 
 | $\tau_R$ | OOD MMLU accept rate | Seeded accept rate | Seeded-generated accept rate |
 | ---: | ---: | ---: | ---: |
-| **0.18** (old default) | **19%** (8 / 42 leaked) | 100% | 100% |
+| 0.18 | 19% (8 / 42 leaked) | 100% | 100% |
 | 0.25 | 2% (1 / 42) | 100% | 100% |
-| **0.30** (new default) | **0%** | 100% | 100% |
+| **0.30** (production) | **0%** | 100% | 100% |
 | 0.35 | 0% | 100% | 100% |
 
-All 8 leaks at $\tau_R = 0.18$ were misroutings where MMLU questions like *"What are the first-line antibiotics for community-acquired pneumonia?"* scored 0.20 against `python-packaging` — the embedder picked up English structural patterns ("first-line X for Y?") rather than topical relevance. Raising $\tau_R$ to $0.30$ eliminates this without sacrificing any true positives. The whitepaper's earlier $0.18$ figures (and §8.5's "hand-tuned" caveat) have been updated accordingly; the new value is data-justified.
-
-This is exactly the kind of finding the routing-only benchmark is built to surface. At N=15 hand-curated, you can't see the leak; at N=42 stratified across MMLU subjects, the failure mode is unambiguous.
+The eight leaks at $\tau_R = 0.18$ are misroutings in which MMLU questions such as *"What are the first-line antibiotics for community-acquired pneumonia?"* score 0.20 against `python-packaging`: the embedder responds to English structural patterns ("first-line X for Y?") rather than topical content. At $\tau_R = 0.30$ the leakage is eliminated with no loss of true positives. The leak is invisible at the 15-question scale and unambiguous across 42 stratified MMLU subjects — the reason the routing-only benchmark uses the larger pool.
 
 #### 8.2.2 Search-space reduction
 
-At $|\mathcal{C}| = 5$ routable categories in this configuration, routing collapses retrieval to 1/5 of the corpus per accepted query — an empirical $5\times$ reduction. The architectural claim is that this factor grows linearly with taxonomy size; validating that at scale requires a larger set of routable categories, which is queued (§8.6).
+At $|\mathcal{C}| = 5$ routable categories in this configuration, routing collapses retrieval to one-fifth of the corpus per accepted query — an empirical $5\times$ reduction. The architecture predicts that this factor grows with taxonomy size; confirming the growth requires a larger set of routable categories than the present corpus provides (§8.9).
 
 ### 8.3 Claim 2 — Contributor-sourced grounding produces measurably different answers
 
-We compare conditions A, B, and C on the five seeded questions where the network has direct knowledge.
+Conditions A, B, and C are compared on the five seeded queries, scored by gold-fact recall:
+
+| Condition | Mean gold-fact recall |
+| --- | ---: |
+| A — vanilla (bare base model) | 0.78 |
+| B — DeQuorum full (route → retrieve → ground) | 0.80 |
+| C — router + persona, retrieval suppressed | 0.43 |
+
+The result does not support a simple "grounding always wins" reading, and is reported as measured. Full grounding edges the bare base model (0.80 vs 0.78) but only narrowly, and the persona-only condition underperforms the base outright (0.43). The cause is headroom: the five seeded facts — generator typing, asyncio completion semantics, `ParamSpec`, QUIC-over-UDP, Rust ownership — lie largely within a 7B code model's existing knowledge, so retrieval has little to add on a recall measure, while the persona prompt's stylistic framing can suppress a fact the base would otherwise state plainly. The measurable advantage of grounding is therefore concentrated where the base model *lacks* the knowledge — the regime isolated in §8.7, where a model scoring 0.0 on a fact reaches 0.5 once the contribution is supplied.
+
+The conditions nonetheless produce distinguishable answers. Only condition B reproduces the exact contribution wording — the `Generator[Y, S, R]` formulation, the QUIC-over-UDP phrasing — which a keyword-recall measure does not fully credit:
 
 | Seeded query | A. Vanilla output | B. DeQuorum full | C. No-retrieval |
 | --- | --- | --- | --- |
@@ -398,9 +429,9 @@ We compare conditions A, B, and C on the five seeded questions where the network
 | [HTTP/3 transport](benchmarks/qwen-bench.md#seeded-4-what-protocol-does-http3-run-on) | Says "UDP" without mentioning QUIC explicitly. | "QUIC, which runs on UDP" — the exact fact in the retrieved contribution. | Says "QUIC on UDP" because the persona surfaces it. |
 | [Rust ownership rules](benchmarks/qwen-bench.md#seeded-5-what-are-rusts-ownership-rules) | General "one owner" gesture, no `Drop` semantics. | Lists the three rules + `Drop` invocation on scope exit. | Lists the three rules, slightly less crisp on `Drop`. |
 
-The qualitative pattern: **B > C > A** on every seeded query. Condition B is the only one that produces exact-quote contribution content (e.g. the `Generator[Y, S, R]` formulation, the QUIC-over-UDP wording). Condition C is recognizably better than A even without retrieval — the category persona's system prompt alone narrows the answer toward the right shape — but it lacks the *specific* claims the contributions encode.
+The qualitative reads above are a single reviewer's, and the keyword-recall measure tempers them: the persona-only column in particular reads better than its 0.43 recall, because gold-fact recall rewards the plain statement of a fact over a well-shaped but hedged answer.
 
-The contribution lift is mechanically detectable in the proof chain: each B-condition answer carries a signature chain of length 3–8, with one signature per retrieved contribution plus the operator signature. The A and C conditions produce no signatures.
+The decisive difference between the conditions is structural rather than in content quality: every B-condition answer carries a signature chain — one signature per retrieved contribution plus the operator's — while A and C carry none. That property, not the recall margin, is what makes attribution and payouts (§5, §8.5–§8.6) computable at all.
 
 ### 8.4 Claim 3 — Refusal over hallucination on out-of-domain questions
 
@@ -422,67 +453,68 @@ The economic interpretation of refusal is non-trivial. In a query-billed network
 
 ### 8.5 Claim 4 — Attribution is cryptographically verifiable
 
-The accountability thesis (§1, §4.2) only holds if attribution is *checkable*, not asserted. This claim is validated by construction rather than by a benchmark: it is a property of the signing code, exercised by the test suite.
+Accountability (§1, §4.2) requires that attribution be checkable rather than asserted. The guarantees here are properties of the signing scheme and hold by construction rather than statistically. Each contribution is signed with Ed25519 — a 64-byte signature over the BLAKE2b hash of its canonical payload — and the 32-byte public key is stored with the contributor record. Two independent properties follow. *Integrity*: altering the stored text or metadata after signing is detected, because the recomputed hash no longer matches the signed one. *Authorship*: a signature validates only under the public counterpart of the signing key, and fails under any other key or any mutation of the signature itself.
 
-| Property | Test | Result |
-| --- | --- | --- |
-| A valid contribution verifies against the contributor's published Ed25519 key | `test_contribution_is_publicly_verifiable` (web), `test_verify_succeeds_with_contributor_public_key` | `verified = true` |
-| Editing stored content after signing is detected | `test_verify_fails_when_content_tampered` | `content_intact = false` |
-| A signature does not verify under the wrong / a forged key | `test_verify_rejects_wrong_key`, `test_signature_verifies_with_matching_public_key` | rejected |
-| A mutated signature field is rejected | `test_tampered_signature_fails_verify` | rejected |
+These guarantees are exposed to consumers directly. The endpoint `GET /v1/contributions/{id}/verify` is unauthenticated and returns the integrity and signature-validity verdicts together with the public key and signature, so any third party can reproduce the check without trusting the operator — the distinction between a record that is merely *signed* and one that is *verifiable*.
 
-The verification path is live in the application: `GET /v1/contributions/{id}/verify` is unauthenticated and returns `content_intact`, `signature_valid`, the contributor's `public_key_hex`, and the `signature_hex`. Anyone can therefore re-derive the result independently of the operator — the property that distinguishes "signed" from "verifiable." Signatures are Ed25519 (64 bytes) over BLAKE2b hashes of the canonical payload; the public key is 32 bytes and travels with the contributor record.
+The guarantee is bounded by key custody. Because contributor keys are at present derived server-side from the authenticated identity (§4.2), the scheme establishes integrity and public verifiability but not resistance to forgery by the operator itself. Non-custodial signing with client-held keys is required to close that gap and is carried as a limitation in §8.8.
 
-What this does **not** yet prove is forgery-resistance against the operator itself: as noted in §4.2, keys are server-derived today, so this validates integrity + public checkability, not non-custodial signing. That is the one open item on this claim (§8.7).
+### 8.6 Claim 5 — Contribution value is measurable, and credit resists manipulation
 
-### 8.6 Claim 5 — Contribution value is measurable, and the payout is gaming-resistant
+The economic design (§5) depends on a quantity the per-citation ledger does not supply: how much each contribution actually shaped a given answer. Equal credit per citation is uninformative — it cannot distinguish a decisive contribution from an incidental one — and it is manipulable. This section defines and evaluates an alternative.
 
-This is the claim that turns the economics (§5) from an assertion into a mechanism. The naive ledger credits every cited contribution **equally** — which is both unfaithful (it says nothing about which contribution actually mattered) and trivially gameable. The open research question is: *given an answer and its proof chain, how much did each contribution actually cause the answer, and can that credit be gamed?*
+**Measure.** For a retrieved contribution $d$, its *marginal value* is the reduction in the answer's resemblance to $d$'s content when $d$ is removed from the context and the answer is regenerated. Credit is the marginal value normalized across the cited set, and payouts (§5) follow that distribution rather than citation count. Per-query credit is recorded in [docs/benchmarks/attribution.md](benchmarks/attribution.md).
 
-**The measure.** For each retrieved contribution $d$, we run a leave-one-out ablation: regenerate the answer with $d$ removed and measure how much the answer's resemblance to $d$'s content drops. That drop is $d$'s **marginal value** — content present *because $d$ was there*. Credit weights normalize marginal values to a share of 1, and payouts (§5) are distributed by that weight rather than per-citation. Reproducible with `dequorum attribution-bench`; per-query credit is written to [docs/benchmarks/attribution.md](benchmarks/attribution.md). On the seed corpus (10 queries, 28 contribution–answer pairs, Qwen 2.5 Coder 7B) the measured **Spearman(retrieval score, marginal value) = −0.12** — retrieval score does *not* predict a contribution's causal value. That is the empirical core of the finding: neither retrieval score nor flat citation count is an acceptable payout proxy, so the leave-one-out measure is necessary, not merely nicer. (Small-N and illustrative, per §8.7.)
+Across two small samples drawn with Qwen 2.5 Coder 7B — the hand-curated seed queries (28 contribution–answer pairs) and an expanded set of gold-annotated paraphrases (23 pairs) — retrieval score shows no dependable relationship with marginal value: the rank correlation is small and changes sign between samples ($\rho = -0.12$ and $+0.19$). Together with flat per-citation credit, which is constant by construction, this excludes retrieval rank and citation count as payout proxies; a causal measure is required.
 
-Two properties are established by construction and proven in the test suite (`tests/attribution/test_marginal.py`):
+**Faithfulness.** Whether the embedding-based marginal reflects genuine answer quality is evaluated against an independent judge (gold-fact recall) and a corresponding judge-based marginal. The evidence at present scale is weak and unstable: the embedding marginal correlates with the judge marginal at $\rho \approx 0.00$ (14 pairs) and $\rho \approx 0.21$ (23 pairs), while retrieval score is consistently non-positive against judged value ($\rho \approx -0.56$ and $-0.20$). The cheap proxies are thus excluded with some confidence, but the embedding marginal is not established as faithful — the association is in the expected direction at the larger sample yet far from conclusive. The judge- and Shapley-based estimators are the principled measures, and larger-sample validation (§8.8) is the decisive open question for this claim.
 
-| Property | Result |
-| --- | --- |
-| **Faithfulness gap.** Flat per-citation credit is constant, so it has *zero* rank-correlation with measured marginal value — it carries no information about which contribution mattered. Marginal value does. | by construction |
-| **Faithful crediting.** A contribution whose content grounds the answer receives strictly more credit than an irrelevant one retrieved alongside it. | `test_relevant_contribution_outscores_irrelevant` |
-| **Gaming resistance.** Submitting a near-duplicate **inflates** a contributor's share under flat credit (2/3 vs 1/2) but **cannot** under marginal credit — the duplicate carries ~0 marginal value. | `test_duplicate_stuffing_does_not_inflate_marginal_share` |
+**Manipulation resistance.** Marginal credit is robust to the standard attacks, each holding by construction:
 
-**Why it's novel.** Data-valuation (data-Shapley, influence functions) is well studied for *training*; faithful, gaming-resistant attribution for *RAG-grounded generation* — where the proof chain makes the credited set explicit — is not. DeQuorum is uniquely positioned to study it because it owns the full pipeline and the signed proof chain. This is also where the research finding and the user value coincide: the metric *is* the contributor's paycheck.
+- *Duplication.* A near-duplicate raises a contributor's share under per-citation credit (from $1/2$ to $2/3$ in the two-contributor case) but not under marginal credit, since the duplicate carries no additional marginal value.
+- *Padding.* An off-topic contribution appended to inflate citation count earns negligible marginal credit.
+- *Paraphrase and collusion.* A reworded copy — including one submitted under a second account — cannot raise the combined Shapley share, because the coalition value saturates once the underlying fact is present.
 
-**Honest limit.** Leave-one-out under-credits content that is genuinely valuable but redundant with a sibling contribution (each looks removable because the other covers it). The principled fix is a Shapley-style average over coalitions (exponential; approximable) — future work (§8.8). The current seed-corpus correlation is also small-N and illustrative, not a population estimate.
+Each property is encoded as a deterministic test in the reference implementation.
 
-### 8.7 Limits of the current evaluation
+**Redundancy.** Leave-one-out under-credits content that is valuable but redundant with a sibling contribution, since either alone appears removable. We address this with a Shapley-value estimator (`attribution.shapley_attribution`, computed exactly for small cited sets), which distributes credit across redundant contributions in proportion to their marginal coalition value while preserving the manipulation-resistance above.
 
-The results above are real, but the evaluation is small and the caveats should be loud:
+**Relation to prior work.** Data valuation — data-Shapley and influence functions — is well developed for model *training*. Faithful, manipulation-resistant attribution for retrieval-grounded *generation*, where a signed proof chain makes the credited set explicit, is to our knowledge unaddressed. The measure is also the system's payout function, so the research question and the contributor's incentive are one and the same.
 
-- **N = 15.** Five questions per bucket is a unit test, not a statistical study. The point of v0.1 is to show the mechanism reproduces across categories, not to establish a population-scale accuracy figure.
-- **Single-language seed corpus.** All five routable categories are technical/programming domains. The refusal behavior on the bee-sting question is encouraging precisely because no medical contributor exists yet — but we also can't yet measure what happens when medical contributors *do* exist and routing has to discriminate among adjacent domains.
-- **Judgement was manual.** The qualitative pattern in §8.3 is a single reviewer's read of the three conditions side-by-side. We do not yet have an automated correctness judge (LLM-as-judge has its own bias issues; a stricter benchmark with held-out human-written answers is the right next step).
-- **The routing threshold is now data-driven but the sweep is still coarse.** $\tau_R = 0.30$ was picked from a 4-point sweep (§8.2.1) over N=127. A finer sweep with a held-out validation set and an actual ROC curve is the next step; the current pick is the lowest threshold that achieves 0% OOD leak on the tested distribution, which may be more aggressive than necessary on a wider distribution.
-- **The training tier (§3.5) is not yet validated.** No LoRA adapter has been trained against the contribution corpus. That experiment requires accumulating ~$10^4$ approved contributions in one category — the threshold the math predicts. We do not have that data yet.
-- **Key custody is server-side.** §8.5's verification is genuine (integrity + public checkability), but contributor keys are derived server-side from the authenticated identity today. Until keys are held client-side (WebCrypto), the operator could in principle re-derive a key and forge a contribution — so the "no trust in the operator" claim is, for now, scoped to verification, not to signing custody.
+### 8.7 Claim 6 — Distilled knowledge remains attributable to its contributor
 
-### 8.8 Next experiments
+The architecture's long-horizon claim (§3.5) is that the contribution corpus is eventually absorbed into the model's weights. For the economic model to survive that transition, credit assignable at retrieval time must remain assignable after distillation. We test this at small scale by fine-tuning a low-rank adapter (Qwen 2.5 0.5B, two epochs) on the seed contributions and measuring whether the model answers a grounded query correctly with retrieval disabled. Full results are in [docs/benchmarks/distill.md](benchmarks/distill.md).
 
-The benchmark harness is structured to support, in order:
+| Recall of the HTTP/3 → "QUIC over UDP" fact | base | adapter (full corpus) | adapter (target contributor withheld) |
+| --- | ---: | ---: | ---: |
+|  | 0.00 | 0.50 | 0.00 |
 
-1. **Scale-out of seeded bucket** (50–200 questions across the same five categories). Establishes statistical floors on the §8.3 lift.
-2. **Cross-domain dilution.** Add 20–30 unseeded categories to test whether the routing accuracy in §8.2 holds as $|\mathcal{C}|$ grows.
-3. **Hybrid retrieval ablation.** Implement §3.4's BM25 + dense + cross-encoder pipeline (the retrieval formalism above); report dense-only vs hybrid vs hybrid+rerank on the same question set.
-4. **LoRA distillation.** Once any category clears $10^4$ approved contributions, train a per-category adapter and measure (a) accuracy on retrieval-suppressed queries, (b) latency improvement, (c) catastrophic-forgetting metrics on unrelated categories.
-5. **Cross-encoder judge.** Build an automated correctness scorer with held-out gold answers per question, so §8.3's qualitative table becomes a numeric one.
-6. **Shapley-approximate attribution.** Replace leave-one-out marginal value (§8.6) with a sampled Shapley estimate so genuinely-valuable-but-redundant contributions are credited fairly, and measure faithfulness against the cross-encoder judge.
+The base model does not produce the fact; training on the corpus installs it; withholding a single contributor's examples removes it again. The fact is therefore entirely attributable to that contributor under a leave-one-contributor-out test — the training-time counterpart of the inference-time attribution of Claim 5. We are not aware of a prior system that both distils community contributions into a model and traces a distilled fact back to its author.
 
-Each experiment is independently shippable; results land in [docs/benchmarks/](benchmarks/) as they complete and are reflected in subsequent revisions of this paper.
+**Limitations.** The result establishes attribution, not quality. Aggregate gold-fact recall across the five seeded queries did not improve under distillation ($0.367 \to 0.300$); at fourteen training examples on a 0.5-billion-parameter model this is expected, and far below the ~$10^4$-contribution regime the architecture anticipates (§3.5). The mechanism and the attribution property are demonstrated; no quality improvement is claimed at this scale.
+
+### 8.8 Limits of the current evaluation
+
+The results above are preliminary, and the following limitations bound their interpretation:
+
+- **Sample size.** Five questions per bucket is a smoke test rather than a statistical study; the aim at v0.1 is to show that each mechanism reproduces across categories, not to estimate population-scale accuracy.
+- **Single-domain seed corpus.** All five routable categories are technical. The out-of-domain refusal in §8.4 is encouraging precisely because no medical contributor yet exists; the harder question — discrimination among adjacent in-domain categories once they are populated — cannot be measured on the present corpus.
+- **Automated judging is coarse.** The condition comparison in §8.3 is scored by gold-fact recall, with an LLM-as-judge available as an alternative. Gold-fact recall is a blunt measure and LLM judging carries known biases; held-out, human-written reference answers remain the appropriate standard.
+- **Attribution faithfulness is unestablished.** The embedding marginal's correlation with the judge marginal is weak and sample-unstable (ρ from ≈0.00 to ≈0.21 across 14 and 23 pairs; §8.6). Whether the measure is faithful must be settled with a larger sample and a stronger judge before it governs payments.
+- **The routing threshold is coarsely tuned.** $\tau_R = 0.30$ comes from a four-point sweep (§8.2.1) over $N=127$: the lowest threshold achieving zero out-of-domain leakage on the tested distribution, which may be conservative on a broader one. A finer sweep against a held-out validation set, with a reported ROC curve, is the appropriate next step.
+- **Distillation is shown only at small scale.** §8.7 establishes attribution under distillation but not a quality gain, which the architecture anticipates only near the ~$10^4$-contribution regime.
+- **Signing is custodial.** The verification of §8.5 establishes integrity and public checkability, but contributor keys are presently derived server-side. Resistance to forgery by the operator requires client-held keys; until then, the "no trust in the operator" property is scoped to verification rather than to signing custody.
+
+### 8.9 Future work
+
+The decisive open question is the faithfulness of the value measure (§8.6): establishing whether the embedding marginal, the Shapley estimator, or a judge-based measure should govern payouts requires hundreds of judge-scored pairs and a held-out, human-referenced correctness scorer in place of gold-fact recall. Beyond it, the evaluation extends naturally along three axes — scale (a larger, multi-domain corpus to convert the per-claim results of §8.2–§8.4 from existence proofs into statistical estimates and to stress routing as adjacent categories populate), retrieval (instantiating and ablating the dense and cross-encoder stages of §3.4), and distillation (repeating §8.7 on a denser corpus and a larger base model to test for a quality gain alongside the established attribution result).
 
 ---
 
 ## 9. Roadmap
 
 ### 0–6 months — Pipeline depth
-- Client-held signing keys (WebCrypto): move key custody off the server so contribution/vote signatures are non-custodial, closing the forgery gap noted in §8.6.
+- Client-held signing keys (WebCrypto): move key custody off the server so contribution and vote signatures are non-custodial, closing the forgery gap noted in §8.5 and §8.8.
 - Phase 2 of governance: triage stage, with reviewer comment + edit-request workflow.
 - Hybrid retrieval (sparse + dense + cross-encoder rerank) replacing pure dense ANN.
 - Structured logging of every `(query, retrieval, answer)` interaction as training data for later distillation.
@@ -509,17 +541,17 @@ Each experiment is independently shippable; results land in [docs/benchmarks/](b
 
 ## 10. Conclusion
 
-The current foundation-model market produces remarkable technology and concentrates the upside. DeQuorum is built on the bet that **the same technology can be produced in a way that distributes the upside to the people who make it work** — without sacrificing quality, latency, or breadth.
+The current foundation-model market produces remarkable technology and concentrates the upside. DeQuorum is built on the proposition that **the same technology can be produced in a way that distributes the upside to the people who make it work.**
 
-That bet rests on three architectural claims:
+The proposition rests on three claims, and the evidence reported here speaks to each unevenly.
 
-1. **Layered retrieval over a swappable base model is enough to be competitive in the short term.** The seed prototype already shows this. Refinement (hybrid retrieval, rerank, taxonomy-aware routing) brings quality to parity with closed RAG products.
+1. **Layered retrieval over a swappable open base model is a viable serving architecture.** The routing and refusal mechanisms are demonstrated (§8.2, §8.4). The quality advantage of grounding over a strong base model, however, is *not* established on the present corpus: measured gold-fact recall shows only a marginal lift (§8.3), because the seeded facts lie within the base model's existing knowledge. Grounding's measurable value appears where the base model is deficient (§8.7), and a quantitative comparison against closed retrieval products remains to be run. This is the claim with the weakest current support.
 
-2. **Per-claim signed governance is what makes attribution and payouts computable.** Without it, there is no principled way to distribute revenue and no way for an end user to verify an answer. With it, both fall out of the same data structure.
+2. **Per-claim signed governance makes attribution and payouts computable.** This is the strongest result: verification is cryptographic and reproducible (§8.5), credit is measurable and resists the standard manipulations (§8.6), and the same proof chain that lets a user audit an answer drives the payout ledger.
 
-3. **The contribution corpus, once large enough, becomes the model.** Low-rank fine-tuning of an open base on an open contribution set produces a contributor-owned foundation model. The retrieval layer never goes away — it serves fresh contributions until the next training cycle — but the model itself starts carrying the network's knowledge.
+3. **The contribution corpus can be distilled into the model with attribution intact.** Demonstrated at small scale (§8.7): a contributor's fact provably enters the weights and is traceable back to its author. The quality benefit of distillation, and the economic faithfulness of the value measure (§8.6), are the open questions that scale must settle.
 
-If those three claims hold, then a foundation model owned by the people who built it is not a thought experiment. It is the next reasonable architectural move in a market that has been ready for it for years.
+The case is therefore partial by design: the accountability machinery — verifiable attribution and traceable distillation — is the part that is both novel and demonstrated, while the quality and economic-faithfulness claims are bounded by corpus size and remain the work ahead.
 
 ---
 

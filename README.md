@@ -1,8 +1,34 @@
-# dequorum
+<div align="center">
+  <img src="services/frontend/public/logo.png" alt="DeQuorum" width="320" />
 
-**A crowdsourced, verifiable, contributor-owned foundational AI.** Contributors publish signed factual claims under a curated category taxonomy; a public peer-review system votes them in or out; an LLM answers queries grounded in approved knowledge while preserving an end-to-end signed proof chain server-side; per-query micro-payments flow back to contributors, reviewers, and compute hosts.
+  <h1>DeQuorum</h1>
 
-This is the codebase for the v0.1 MVP. License: **Apache 2.0**. See [docs/PRODUCT.md](docs/PRODUCT.md) for the product spec and [docs/WHITEPAPER.md](docs/WHITEPAPER.md) for the architectural thesis.
+  <strong>A crowdsourced, verifiable, contributor-owned foundational AI.</strong>
+
+  <p>
+    <a href="docs/WHITEPAPER.md">Whitepaper</a> ·
+    <a href="docs/PRODUCT.md">Product</a> ·
+    <a href="#local-dev-compose">Quick Start</a> ·
+    <a href="docs/architecture/">Architecture</a> ·
+    <a href="docs/benchmarks/">Benchmarks</a>
+  </p>
+
+  <p>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/et-do/DeQuorum?colorA=363a4f&colorB=b7bdf8" alt="License"></a>
+    <a href="https://github.com/et-do/DeQuorum/actions/workflows/ci-python.yml"><img src="https://github.com/et-do/DeQuorum/actions/workflows/ci-python.yml/badge.svg" alt="CI (app)"></a>
+    <a href="https://github.com/et-do/DeQuorum/actions/workflows/ci-frontend.yml"><img src="https://github.com/et-do/DeQuorum/actions/workflows/ci-frontend.yml/badge.svg" alt="CI (frontend)"></a>
+    <a href="https://github.com/et-do/DeQuorum/stargazers"><img src="https://img.shields.io/github/stars/et-do/DeQuorum?colorA=363a4f&colorB=b7bdf8&style=flat" alt="Stars"></a>
+    <a href="https://github.com/et-do/DeQuorum/commits/main"><img src="https://img.shields.io/github/last-commit/et-do/DeQuorum?colorA=363a4f&colorB=b7bdf8" alt="Last commit"></a>
+    <img src="https://img.shields.io/badge/python-3.13%2B-b7bdf8?colorA=363a4f" alt="Python 3.13+">
+    <img src="https://img.shields.io/badge/React-19-b7bdf8?colorA=363a4f&logo=react" alt="React 19">
+  </p>
+</div>
+
+---
+
+Contributors publish signed factual claims under a curated category taxonomy; a public peer-review system votes them in or out; an LLM answers queries grounded in approved knowledge while preserving an end-to-end signed proof chain server-side; per-query micro-payments flow back to contributors, reviewers, and compute hosts.
+
+This is the codebase for the v0.1 MVP, licensed **Apache 2.0**. See [docs/PRODUCT.md](docs/PRODUCT.md) for the product spec and [docs/WHITEPAPER.md](docs/WHITEPAPER.md) for the architectural thesis.
 
 ## Open source, top to bottom
 

@@ -48,6 +48,47 @@ class BenchmarkReport:
     notes: tuple[str, ...] = field(default_factory=tuple)
 
 
+@dataclass(frozen=True, slots=True)
+class ConditionScores:
+    """Mean judge score per condition over questions that have gold facts —
+    the quantitative form of Claim 2's qualitative B>C>A pattern."""
+
+    n: int
+    vanilla: float
+    dequorum_full: float
+    dequorum_no_retrieval: float
+
+
+def score_conditions(report: BenchmarkReport, judge: object) -> ConditionScores:
+    """Score each condition's answers against gold facts. `judge` is a
+    dequorum.eval.Judge."""
+    from dequorum.eval import gold_for
+
+    scored = [r for r in report.results if gold_for(r.question.text)]
+
+    def mean(attr: str) -> float:
+        if not scored:
+            return float("nan")
+        vals = []
+        for r in scored:
+            cr: ConditionResult = getattr(r, attr)
+            vals.append(
+                judge.score(  # type: ignore[attr-defined]
+                    query=r.question.text,
+                    answer=cr.answer or "",
+                    reference=gold_for(r.question.text),
+                )
+            )
+        return sum(vals) / len(vals)
+
+    return ConditionScores(
+        n=len(scored),
+        vanilla=mean("vanilla"),
+        dequorum_full=mean("dequorum_full"),
+        dequorum_no_retrieval=mean("dequorum_no_retrieval"),
+    )
+
+
 def _summarize_routing(response: NetworkResponse | None) -> str | None:
     if response is None:
         return None

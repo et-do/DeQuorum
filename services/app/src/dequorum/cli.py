@@ -251,6 +251,13 @@ def _build_parser() -> argparse.ArgumentParser:
     attrib.add_argument("--min-score", type=float, default=None)
     attrib.add_argument("--retrieve-top-k", type=int, default=3)
     attrib.add_argument(
+        "--questions",
+        choices=("seed", "gold"),
+        default="gold",
+        help="Question source: 'seed' (15 hand-curated) or 'gold' (all "
+        "gold-annotated incl. paraphrase variants — larger faithfulness N)",
+    )
+    attrib.add_argument(
         "--limit", type=int, default=None, help="Run only the first N questions"
     )
     attrib.add_argument(
@@ -259,6 +266,41 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Where to write the Markdown report",
     )
     _add_database_url_arg(attrib)
+
+    distill = sub.add_parser(
+        "distill-poc",
+        help="Toy LoRA distillation: corpus->weights + leave-one-contributor-out",
+    )
+    distill.add_argument(
+        "--base",
+        default="Qwen/Qwen2.5-0.5B-Instruct",
+        help="HuggingFace base model id (small + Apache-2.0 by default)",
+    )
+    distill.add_argument("--epochs", type=int, default=3)
+    distill.add_argument(
+        "--router", choices=("keyword", "embedding"), default="embedding"
+    )
+    distill.add_argument("--min-score", type=float, default=None)
+    distill.add_argument("--retrieve-top-k", type=int, default=3)
+    distill.add_argument(
+        "--target-query",
+        default="What protocol does HTTP/3 run on?",
+        help="Seeded query whose contributor we leave out for attribution",
+    )
+    distill.add_argument(
+        "--output",
+        default="docs/benchmarks/distill.md",
+        help="Where to write the Markdown report",
+    )
+    _add_database_url_arg(distill)
+
+    cost = sub.add_parser(
+        "cost-model", help="Per-query unit economics + break-even (no DB needed)"
+    )
+    cost.add_argument("--revenue-per-query", type=float, default=None)
+    cost.add_argument("--tokens-out", type=int, default=None)
+    cost.add_argument("--usd-per-1m-output", type=float, default=None)
+    cost.add_argument("--queries-per-month", type=int, default=None)
 
     db = sub.add_parser("db", help="Database management commands")
     db_sub = db.add_subparsers(dest="db_cmd", required=True)
@@ -710,6 +752,18 @@ def _cmd_benchmark(args: argparse.Namespace) -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     write_markdown_report(report, output_path)
     print(f"\nReport written: {output_path}")
+
+    # Quantify Claim 2: judge-score each condition over seeded questions.
+    from dequorum.benchmark.runner import score_conditions
+    from dequorum.eval import KeywordRecallJudge
+
+    scores = score_conditions(report, KeywordRecallJudge())
+    print(
+        f"Gold-recall over {scores.n} seeded Q  ·  "
+        f"A vanilla={scores.vanilla:.2f}  "
+        f"C no-retrieval={scores.dequorum_no_retrieval:.2f}  "
+        f"B full={scores.dequorum_full:.2f}"
+    )
     return 0
 
 
@@ -769,11 +823,13 @@ def _cmd_attribution_bench(args: argparse.Namespace) -> int:
         run_attribution_benchmark,
         write_attribution_report,
     )
+    from dequorum.eval import KeywordRecallJudge
 
     with open_category_store() as cs:
         categories = tuple(cs.routable())
     router = _build_router(categories, args.router, args.min_score)
     embedder = SentenceTransformerEmbedder()
+    judge = KeywordRecallJudge()
 
     if args.mock:
         model: MockBaseModel | OllamaBaseModel = MockBaseModel()
@@ -792,7 +848,13 @@ def _cmd_attribution_bench(args: argparse.Namespace) -> int:
         )
         model_label = resolve_ollama_tag(args.model or DEFAULT_BASE_MODEL_ID)
 
-    questions = SEED_QUESTIONS if args.limit is None else SEED_QUESTIONS[: args.limit]
+    if args.questions == "gold":
+        from dequorum.eval import gold_questions
+
+        source: list = gold_questions()
+    else:
+        source = list(SEED_QUESTIONS)
+    questions = source if args.limit is None else source[: args.limit]
 
     def progress(i: int, total: int, text: str) -> None:
         print(f"  [{i}/{total}] {text[:80]}", flush=True)
@@ -805,6 +867,7 @@ def _cmd_attribution_bench(args: argparse.Namespace) -> int:
             store=store,
             model=model,
             embedder=embedder,
+            judge=judge,
             retrieve_top_k=args.retrieve_top_k,
             progress=progress,
         )
@@ -817,6 +880,138 @@ def _cmd_attribution_bench(args: argparse.Namespace) -> int:
         f"queries={len(report.rows)} pairs={report.n_pairs} "
         f"spearman(score,value)={report.spearman_score_vs_value:.3f}"
     )
+    return 0
+
+
+def _cmd_distill_poc(args: argparse.Namespace) -> int:
+    """Toy LoRA distillation: show the corpus moves into the weights, and
+    that leaving one contributor's examples out removes exactly their fact."""
+    _bootstrap(args)
+    _ensure_seeded()
+
+    from dequorum.benchmark import SEED_QUESTIONS
+    from dequorum.distill import (
+        attribution_delta,
+        build_examples,
+        exclude_contributor,
+    )
+    from dequorum.distill.poc import base_generator, generate, train_lora
+    from dequorum.eval import KeywordRecallJudge, gold_for
+    from dequorum.retrieval import Retriever
+
+    judge = KeywordRecallJudge()
+    with open_category_store() as cs:
+        categories = tuple(cs.routable())
+    router = _build_router(categories, args.router, args.min_score)
+
+    seeded = [q for q in SEED_QUESTIONS if gold_for(q.text)]
+    all_examples = []
+    target_contributor = None
+    with open_contribution_store() as store:
+        retriever = Retriever(store)
+        for q in seeded:
+            routing = router.route(q.text, top_k=1)
+            if not routing.selected:
+                continue
+            cat = routing.selected[0].category
+            retrieved = tuple(
+                retriever.retrieve(q.text, cat.category_id, top_k=args.retrieve_top_k)
+            )
+            all_examples.extend(build_examples(q.text, retrieved))
+            if q.text == args.target_query and retrieved:
+                target_contributor = retrieved[0].contribution.contributor_id
+
+    if not all_examples or target_contributor is None:
+        print("No training examples / target not grounded — is the corpus seeded?")
+        return 1
+
+    target_gold = gold_for(args.target_query)
+    minus_examples = exclude_contributor(all_examples, target_contributor)
+    print(
+        f"Examples: {len(all_examples)} (minus target: {len(minus_examples)}) · "
+        f"base={args.base} · target contributor={target_contributor}"
+    )
+
+    def mean_recall(gen) -> float:
+        vals = [
+            judge.score(query=q.text, answer=gen(q.text), reference=gold_for(q.text))
+            for q in seeded
+        ]
+        return sum(vals) / len(vals)
+
+    def target_recall(gen) -> float:
+        return judge.score(
+            query=args.target_query,
+            answer=gen(args.target_query),
+            reference=target_gold,
+        )
+
+    print("Baseline (no adapter)...")
+    base_gen = base_generator(args.base)
+    base_mean, base_target = mean_recall(base_gen), target_recall(base_gen)
+
+    print("Training LoRA on full corpus...")
+    m_all, t_all = train_lora(all_examples, base_id=args.base, epochs=args.epochs)
+    all_mean = mean_recall(lambda p: generate(m_all, t_all, p))
+    all_target = target_recall(lambda p: generate(m_all, t_all, p))
+
+    print("Training LoRA without target contributor...")
+    m_minus, t_minus = train_lora(minus_examples, base_id=args.base, epochs=args.epochs)
+    minus_target = target_recall(lambda p: generate(m_minus, t_minus, p))
+
+    delta = attribution_delta(
+        recall_with=all_target, recall_without=minus_target, recall_base=base_target
+    )
+    lines = [
+        "# Distillation PoC",
+        "",
+        f"Base: `{args.base}` · epochs {args.epochs} · seeded queries {len(seeded)}",
+        "",
+        "## Corpus → weights (retrieval-suppressed gold recall)",
+        "",
+        f"- mean recall, base model: {base_mean:.3f}",
+        f"- mean recall, LoRA on full corpus: {all_mean:.3f}",
+        f"- **learned gain: {all_mean - base_mean:+.3f}**",
+        "",
+        "## Attribution survives distillation",
+        "",
+        f"Target: '{args.target_query}' · contributor `{target_contributor}`",
+        "",
+        f"- recall, base: {base_target:.3f}",
+        f"- recall, LoRA-all: {all_target:.3f}",
+        f"- recall, LoRA-without-contributor: {minus_target:.3f}",
+        f"- **attributable fraction: {delta['attributable_fraction']:.3f}** — share of "
+        "the learned fact traceable to this contributor's examples via "
+        "leave-one-contributor-out.",
+        "",
+    ]
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines))
+    print(f"\nReport written: {out}")
+    print(
+        f"learned_gain(mean)={all_mean - base_mean:+.3f}  "
+        f"target_attributable={delta['attributable_fraction']:.3f}"
+    )
+    return 0
+
+
+def _cmd_cost_model(args: argparse.Namespace) -> int:
+    """Print per-query unit economics; no database or model required."""
+    from dequorum.economics import CostModel
+
+    overrides = {}
+    if args.revenue_per_query is not None:
+        overrides["revenue_per_query"] = args.revenue_per_query
+    if args.tokens_out is not None:
+        overrides["tokens_out"] = args.tokens_out
+    if args.usd_per_1m_output is not None:
+        overrides["usd_per_1m_output"] = args.usd_per_1m_output
+    if args.queries_per_month is not None:
+        overrides["queries_per_month"] = args.queries_per_month
+    model = CostModel(**overrides)
+    for line in model.report_lines():
+        print(line)
     return 0
 
 
@@ -871,6 +1066,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_routebench(args)
     if args.cmd == "attribution-bench":
         return _cmd_attribution_bench(args)
+    if args.cmd == "distill-poc":
+        return _cmd_distill_poc(args)
+    if args.cmd == "cost-model":
+        return _cmd_cost_model(args)
     if args.cmd == "db":
         return _cmd_db(args)
     return 2

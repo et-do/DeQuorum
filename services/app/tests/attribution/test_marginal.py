@@ -11,7 +11,12 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from dequorum.attribution import distribute_pool, measure_attribution
+from dequorum.attribution import (
+    distribute_pool,
+    measure_attribution,
+    shapley_attribution,
+)
+from dequorum.eval import KeywordRecallJudge
 from dequorum.knowledge.contribution import Contribution
 from dequorum.retrieval import ScoredContribution
 from dequorum.routing.embedder import HashEmbedder
@@ -113,6 +118,121 @@ def test_duplicate_stuffing_does_not_inflate_marginal_share() -> None:
     marg_honest = distribute_pool(_credits(honest), 1.0).get("alice", 0.0)
     marg_gamed = distribute_pool(_credits(gamed), 1.0).get("alice", 0.0)
     assert marg_gamed <= marg_honest + 1e-9
+
+
+def test_judge_marginal_tracks_relevance() -> None:
+    """With a score_answer hook, judge_marginal is populated, and a relevant
+    contribution's quality impact exceeds an irrelevant one's."""
+    judge = KeywordRecallJudge()
+    gold = ("quasar", "entanglement", "spectroscopy")
+    retrieved = [
+        _scored(_X, 0.9, "alice"),
+        _scored("sourdough fermentation needs flour water salt time", 0.1, "bob"),
+    ]
+    credits = measure_attribution(
+        query=_QUERY,
+        persona_prompt="You are a physics assistant.",
+        retrieved=retrieved,
+        model=RelevanceModel(),
+        embedder=HashEmbedder(512),
+        score_answer=lambda ans: judge.score(query=_QUERY, answer=ans, reference=gold),
+    )
+    rel = next(c for c in credits if c.contributor_id == "alice")
+    irrel = next(c for c in credits if c.contributor_id == "bob")
+    assert rel.judge_marginal is not None and irrel.judge_marginal is not None
+    assert rel.judge_marginal > irrel.judge_marginal
+
+
+_GOLD = ("quasar", "spectroscopy", "gravitational", "kilonova")  # 2 in _X, 2 in _Y
+
+
+def _shapley(retrieved):
+    judge = KeywordRecallJudge()
+    return shapley_attribution(
+        query=_QUERY,
+        persona_prompt="You are a physics assistant.",
+        retrieved=retrieved,
+        model=RelevanceModel(),
+        score_answer=lambda a: judge.score(query=_QUERY, answer=a, reference=_GOLD),
+    )
+
+
+def test_shapley_fixes_redundancy_undercrediting_while_staying_fair() -> None:
+    """Shapley credits redundant-but-valuable content where LOO zeroes it,
+    yet a duplicate still can't inflate the contributor's total."""
+    honest = [_scored(_X, 0.9, "alice"), _scored(_Y, 0.8, "bob")]
+    gamed = [
+        _scored(_X, 0.9, "alice", version=1),
+        _scored(_X, 0.85, "alice", version=2),  # redundant duplicate
+        _scored(_Y, 0.8, "bob"),
+    ]
+
+    sh_honest = distribute_pool(_shapley(honest), 1.0)["alice"]
+    sh_gamed = distribute_pool(_shapley(gamed), 1.0)["alice"]
+    # Duplicating barely changes alice's fair Shapley share (no inflation).
+    assert abs(sh_gamed - sh_honest) < 0.15
+
+    # And Shapley credits the duplicated-but-valuable content, where LOO
+    # collapses it to ~0.
+    loo_gamed = distribute_pool(
+        measure_attribution(
+            query=_QUERY,
+            persona_prompt="You are a physics assistant.",
+            retrieved=gamed,
+            model=RelevanceModel(),
+            embedder=HashEmbedder(512),
+        ),
+        1.0,
+    ).get("alice", 0.0)
+    assert sh_gamed > loo_gamed + 0.1
+
+
+# --- Adversarial gaming suite -------------------------------------------
+
+
+def test_citation_padding_does_not_pay() -> None:
+    """Padding with an irrelevant contribution lifts a contributor's share
+    under flat credit, but earns ~0 under marginal credit."""
+    honest = [_scored(_X, 0.9, "alice"), _scored(_Y, 0.8, "bob")]
+    padded = [
+        _scored(_X, 0.9, "alice"),
+        _scored("alice unrelated filler about gardening tomatoes", 0.5, "alice"),
+        _scored(_Y, 0.8, "bob"),
+    ]
+    assert _flat_shares(padded)["alice"] > _flat_shares(honest)["alice"]
+    marg_honest = distribute_pool(_credits(honest), 1.0)["alice"]
+    marg_padded = distribute_pool(_credits(padded), 1.0)["alice"]
+    assert marg_padded <= marg_honest + 1e-9
+
+
+def test_paraphrase_duplicate_does_not_inflate_under_shapley() -> None:
+    """A paraphrase (different words, same gold facts) can't inflate a
+    contributor's Shapley share — the judge value saturates on the fact."""
+    para = "spectroscopy of quasar entanglement shows photon correlation patterns"
+    honest = [_scored(_X, 0.9, "alice"), _scored(_Y, 0.8, "bob")]
+    gamed = [
+        _scored(_X, 0.9, "alice", version=1),
+        _scored(para, 0.85, "alice", version=2),
+        _scored(_Y, 0.8, "bob"),
+    ]
+    sh_honest = distribute_pool(_shapley(honest), 1.0)["alice"]
+    sh_gamed = distribute_pool(_shapley(gamed), 1.0)["alice"]
+    assert abs(sh_gamed - sh_honest) < 0.15
+
+
+def test_collusion_does_not_inflate_group_under_shapley() -> None:
+    """Two colluding contributors copying the same fact can't raise their
+    combined Shapley share beyond the fact's value."""
+    honest = [_scored(_X, 0.9, "alice"), _scored(_Y, 0.8, "bob")]
+    colluding = [
+        _scored(_X, 0.9, "alice"),
+        _scored(_X, 0.85, "mallory", version=2),
+        _scored(_Y, 0.8, "bob"),
+    ]
+    sh = distribute_pool(_shapley(colluding), 1.0)
+    group = sh.get("alice", 0.0) + sh.get("mallory", 0.0)
+    honest_group = distribute_pool(_shapley(honest), 1.0)["alice"]
+    assert abs(group - honest_group) < 0.15
 
 
 def test_distribute_pool_aggregates_by_contributor() -> None:

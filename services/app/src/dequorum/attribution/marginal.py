@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from dequorum.inference.base_model import BaseModel
@@ -23,6 +23,11 @@ class ContributionCredit:
     marginal_value: float
     # marginal_value normalized across the answer's contributions; sums to 1.
     credit_weight: float
+    # Optional independent ground truth: the change in an external quality
+    # score (e.g. a judge vs gold facts) when this contribution is removed.
+    # Used to validate that the cheap `marginal_value` is faithful. None if no
+    # scorer was supplied.
+    judge_marginal: float | None = None
 
 
 def _cos(vec, other) -> float:
@@ -37,6 +42,7 @@ def measure_attribution(
     retrieved: Sequence[ScoredContribution],
     model: BaseModel,
     embedder: Embedder,
+    score_answer: Callable[[str], float] | None = None,
 ) -> list[ContributionCredit]:
     """Measure each retrieved contribution's causal contribution to the answer.
 
@@ -63,8 +69,10 @@ def measure_attribution(
     )
     full_emb = embedder.embed([full_answer])[0]
     contrib_embs = embedder.embed([c.text for c in contribs])
+    full_score = score_answer(full_answer) if score_answer else None
 
     marginals: list[float] = []
+    judge_marginals: list[float | None] = []
     for i, _ in enumerate(retrieved):
         others = tuple(c for j, c in enumerate(contribs) if j != i)
         ablated_answer = model.complete(
@@ -76,11 +84,15 @@ def measure_attribution(
         with_sim = _cos(full_emb, c_emb)
         without_sim = _cos(ablated_emb, c_emb)
         marginals.append(max(0.0, with_sim - without_sim))
+        if score_answer is not None and full_score is not None:
+            judge_marginals.append(full_score - score_answer(ablated_answer))
+        else:
+            judge_marginals.append(None)
 
     total = sum(marginals)
     n = len(marginals)
     credits: list[ContributionCredit] = []
-    for sc, value in zip(retrieved, marginals, strict=True):
+    for sc, value, jmarg in zip(retrieved, marginals, judge_marginals, strict=True):
         weight = (value / total) if total > 0 else 1.0 / n
         credits.append(
             ContributionCredit(
@@ -89,6 +101,7 @@ def measure_attribution(
                 retrieval_score=sc.score,
                 marginal_value=value,
                 credit_weight=weight,
+                judge_marginal=jmarg,
             )
         )
     return credits
