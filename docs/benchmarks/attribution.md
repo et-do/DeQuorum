@@ -20,7 +20,7 @@ Independent ground truth is a judge-measured quality delta (gold-fact recall wit
 - **Spearman(embedding_marginal, judge_marginal) = 0.041** (higher ⇒ the cheap measure is faithful to real quality impact)
 - Spearman(retrieval_score, judge_marginal) = -0.238 (near-zero ⇒ retrieval score is not a value proxy)
 
-At this scale neither cheap signal tracks judged quality: the embedding marginal is essentially uncorrelated with it (0.041), and retrieval score is weakly negative (-0.238). The embedding marginal is therefore not validated as a payout signal as currently defined.
+This result is judge-sensitive. Under the coarse gold-recall judge (this run) the embedding marginal is essentially uncorrelated with judged quality (0.041); under an LLM-as-judge it rises to 0.148 (retrieval-vs-judge 0.093) — a weak positive, above retrieval score and flat credit, but still too weak to set payouts. See [attribution_llmjudge.md](attribution_llmjudge.md) for the LLM-judge run. The embedding marginal is therefore weakly faithful at best, and not validated as a payout signal as currently defined.
 
 ## Per-query credit
 

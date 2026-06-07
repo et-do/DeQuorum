@@ -280,6 +280,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Toy LoRA distillation: corpus->weights + leave-one-contributor-out",
     )
     distill.add_argument(
+        "--corpus",
+        choices=("seed", "novelty"),
+        default="seed",
+        help="'seed' (peer contributions; needs DB) or 'novelty' (invented "
+        "facts the base can't know — DB-free; where a quality gain should show)",
+    )
+    distill.add_argument(
+        "--limit", type=int, default=None, help="First N facts (novelty corpus only)"
+    )
+    distill.add_argument(
         "--base",
         default="Qwen/Qwen2.5-0.5B-Instruct",
         help="HuggingFace base model id (small + Apache-2.0 by default)",
@@ -911,64 +921,88 @@ def _cmd_attribution_bench(args: argparse.Namespace) -> int:
 def _cmd_distill_poc(args: argparse.Namespace) -> int:
     """Toy LoRA distillation: show the corpus moves into the weights, and
     that leaving one contributor's examples out removes exactly their fact."""
-    _bootstrap(args)
-    _ensure_seeded()
-
-    from dequorum.benchmark import SEED_QUESTIONS
-    from dequorum.distill import (
-        attribution_delta,
-        build_examples,
-        exclude_contributor,
+    from dequorum.distill import attribution_delta, exclude_contributor
+    from dequorum.distill.poc import (
+        TrainingExample,
+        base_generator,
+        generate,
+        train_lora,
     )
-    from dequorum.distill.poc import base_generator, generate, train_lora
-    from dequorum.eval import KeywordRecallJudge, gold_for
-    from dequorum.retrieval import Retriever
+    from dequorum.eval import KeywordRecallJudge
 
     judge = KeywordRecallJudge()
-    with open_category_store() as cs:
-        categories = tuple(cs.routable())
-    router = _build_router(categories, args.router, args.min_score)
+    corpus = getattr(args, "corpus", "seed")
 
-    seeded = [q for q in SEED_QUESTIONS if gold_for(q.text)]
-    all_examples = []
-    target_contributor = None
-    with open_contribution_store() as store:
-        retriever = Retriever(store)
-        for q in seeded:
-            routing = router.route(q.text, top_k=1)
-            if not routing.selected:
-                continue
-            cat = routing.selected[0].category
-            retrieved = tuple(
-                retriever.retrieve(q.text, cat.category_id, top_k=args.retrieve_top_k)
+    if corpus == "novelty":
+        # Invented facts the base model cannot know — distilling these is where
+        # a *quality* gain (not just attribution) should appear. No DB needed.
+        from dequorum.benchmark.novelty import NOVELTY_FACTS
+
+        facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+        all_examples = [
+            TrainingExample(
+                prompt=f.query,
+                completion=f.note,
+                contributor_id=f"dq:novelty-{i}",
+                contribution_id=f"nov-{i}",
             )
-            all_examples.extend(build_examples(q.text, retrieved))
-            if q.text == args.target_query and retrieved:
-                target_contributor = retrieved[0].contribution.contributor_id
+            for i, f in enumerate(facts)
+        ]
+        recall_items = [(f.query, f.gold) for f in facts]
+        target_query, target_gold = facts[0].query, facts[0].gold
+        target_contributor = "dq:novelty-0"
+        corpus_label = f"novelty ({len(facts)} invented facts)"
+    else:
+        _bootstrap(args)
+        _ensure_seeded()
+        from dequorum.benchmark import SEED_QUESTIONS
+        from dequorum.distill import build_examples
+        from dequorum.eval import gold_for
+        from dequorum.retrieval import Retriever
 
-    if not all_examples or target_contributor is None:
-        print("No training examples / target not grounded — is the corpus seeded?")
-        return 1
+        with open_category_store() as cs:
+            categories = tuple(cs.routable())
+        router = _build_router(categories, args.router, args.min_score)
+        seeded = [q for q in SEED_QUESTIONS if gold_for(q.text)]
+        all_examples = []
+        target_contributor = None
+        with open_contribution_store() as store:
+            retriever = Retriever(store)
+            for q in seeded:
+                routing = router.route(q.text, top_k=1)
+                if not routing.selected:
+                    continue
+                cat = routing.selected[0].category
+                retrieved = tuple(
+                    retriever.retrieve(
+                        q.text, cat.category_id, top_k=args.retrieve_top_k
+                    )
+                )
+                all_examples.extend(build_examples(q.text, retrieved))
+                if q.text == args.target_query and retrieved:
+                    target_contributor = retrieved[0].contribution.contributor_id
+        if not all_examples or target_contributor is None:
+            print("No training examples / target not grounded — is the corpus seeded?")
+            return 1
+        recall_items = [(q.text, gold_for(q.text)) for q in seeded]
+        target_query, target_gold = args.target_query, gold_for(args.target_query)
+        corpus_label = f"seed ({len(seeded)} seeded queries)"
 
-    target_gold = gold_for(args.target_query)
     minus_examples = exclude_contributor(all_examples, target_contributor)
     print(
         f"Examples: {len(all_examples)} (minus target: {len(minus_examples)}) · "
-        f"base={args.base} · target contributor={target_contributor}"
+        f"base={args.base} · corpus={corpus} · target contributor={target_contributor}"
     )
 
     def mean_recall(gen) -> float:
         vals = [
-            judge.score(query=q.text, answer=gen(q.text), reference=gold_for(q.text))
-            for q in seeded
+            judge.score(query=q, answer=gen(q), reference=g) for q, g in recall_items
         ]
         return sum(vals) / len(vals)
 
     def target_recall(gen) -> float:
         return judge.score(
-            query=args.target_query,
-            answer=gen(args.target_query),
-            reference=target_gold,
+            query=target_query, answer=gen(target_query), reference=target_gold
         )
 
     print("Baseline (no adapter)...")
@@ -990,7 +1024,7 @@ def _cmd_distill_poc(args: argparse.Namespace) -> int:
     lines = [
         "# Distillation PoC",
         "",
-        f"Base: `{args.base}` · epochs {args.epochs} · seeded queries {len(seeded)}",
+        f"Base: `{args.base}` · epochs {args.epochs} · corpus {corpus_label}",
         "",
         "## Corpus → weights (retrieval-suppressed gold recall)",
         "",
