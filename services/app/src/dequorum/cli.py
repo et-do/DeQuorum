@@ -294,6 +294,22 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_database_url_arg(distill)
 
+    novelty = sub.add_parser(
+        "novelty-bench",
+        help="Grounding lift on invented facts the base model can't know (no DB)",
+    )
+    novelty.add_argument("--mock", action="store_true", help="Use mock model")
+    novelty.add_argument(
+        "--model", default="", help="Ollama model id/tag (default from registry)"
+    )
+    novelty.add_argument("--host", default="http://localhost:11434", help="Ollama host")
+    novelty.add_argument("--limit", type=int, default=None, help="First N facts only")
+    novelty.add_argument(
+        "--output",
+        default="docs/benchmarks/novelty.md",
+        help="Where to write the Markdown report",
+    )
+
     cost = sub.add_parser(
         "cost-model", help="Per-query unit economics + break-even (no DB needed)"
     )
@@ -996,6 +1012,42 @@ def _cmd_distill_poc(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_novelty_bench(args: argparse.Namespace) -> int:
+    """Grounding lift on invented facts; needs only a model (no DB)."""
+    from dequorum.benchmark.novelty import (
+        NOVELTY_FACTS,
+        run_novelty_benchmark,
+        write_novelty_report,
+    )
+    from dequorum.inference.base_model import MockBaseModel, OllamaBaseModel
+    from dequorum.inference.models import DEFAULT_BASE_MODEL_ID, resolve_ollama_tag
+
+    if args.mock:
+        model: object = MockBaseModel()
+        label = "mock"
+    else:
+        model = OllamaBaseModel(
+            model=args.model, host=args.host, timeout_seconds=300.0, num_predict=192
+        )
+        label = resolve_ollama_tag(args.model or DEFAULT_BASE_MODEL_ID)
+
+    facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+
+    def progress(i: int, total: int, text: str) -> None:
+        print(f"  [{i}/{total}] {text[:80]}", flush=True)
+
+    print(f"Running novelty-bench over {len(facts)} invented facts...")
+    report = run_novelty_benchmark(model, facts=facts, progress=progress)  # type: ignore[arg-type]
+    report.model_label = label
+    write_novelty_report(report, args.output)
+    print(
+        f"base={report.mean_base:.3f}  grounded={report.mean_grounded:.3f}  "
+        f"lift={report.lift:+.3f}"
+    )
+    print(f"Report written: {args.output}")
+    return 0
+
+
 def _cmd_cost_model(args: argparse.Namespace) -> int:
     """Print per-query unit economics; no database or model required."""
     from dequorum.economics import CostModel
@@ -1070,6 +1122,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_distill_poc(args)
     if args.cmd == "cost-model":
         return _cmd_cost_model(args)
+    if args.cmd == "novelty-bench":
+        return _cmd_novelty_bench(args)
     if args.cmd == "db":
         return _cmd_db(args)
     return 2

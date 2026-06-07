@@ -24,11 +24,11 @@ export const WHITEPAPER_MARKDOWN = String.raw`# DeQuorum
 
 DeQuorum is a foundational AI system designed from the ground up around a simple inversion of the current model: instead of a small handful of companies training AI on the world's knowledge and capturing the entire upside, **the people who contribute the knowledge, verify it, host the compute, and use the system all share in what it earns.**
 
-The system is built in three layers. A **base language model** handles fluent reasoning. A **knowledge layer** of signed, peer-reviewed contributions grounds the model's answers in claims that real human contributors stand behind. Over time, the contribution layer's content gets distilled into the base model itself through low-rank fine-tuning, so what started as retrieval ends as a trained, contributor-owned model that competes head-to-head with closed alternatives on quality while remaining radically more transparent on attribution and economics.
+The system is built in three layers. A **base language model** handles fluent reasoning. A **knowledge layer** of signed, peer-reviewed contributions grounds the model's answers in claims that real human contributors stand behind. Over time, the contribution layer's content is distilled into the base model itself through low-rank fine-tuning, so what began as retrieval becomes a trained, contributor-owned model — with the aim of matching closed alternatives on quality while remaining radically more transparent on attribution and economics.
 
-Every claim in the system is cryptographically signed by its author. Every answer ships with a verifiable proof chain showing exactly which contributions shaped it. Every query that earns revenue distributes that revenue back to the contributors, reviewers, and infrastructure providers whose work produced the answer, denominated in real money.
+Every claim in the system is cryptographically signed by its author, and every answer carries a verifiable proof chain showing which contributions shaped it. Revenue from a query is designed to flow back to the contributors, reviewers, and infrastructure providers whose work produced the answer, in proportion to a measured estimate of each contribution's value.
 
-This paper describes what DeQuorum is, why it's structured the way it is, and how it scales from today's seed prototype to a globally-relevant alternative to closed foundation models.
+This paper states what DeQuorum is and why it is structured as it is, and reports what the v0.1 prototype does and does not yet establish. The accountability machinery — verifiable attribution and attribution that survives distillation — is demonstrated; the quality advantage over strong base models and the faithfulness of the value measure at scale are bounded by the present corpus and remain open (§8).
 
 ---
 
@@ -435,7 +435,16 @@ The conditions nonetheless produce distinguishable answers. Only condition B rep
 
 The qualitative reads above are a single reviewer's, and the keyword-recall measure tempers them: the persona-only column in particular reads better than its 0.43 recall, because gold-fact recall rewards the plain statement of a fact over a well-shaped but hedged answer.
 
-The decisive difference between the conditions is structural rather than in content quality: every B-condition answer carries a signature chain — one signature per retrieved contribution plus the operator's — while A and C carry none. That property, not the recall margin, is what makes attribution and payouts (§5, §8.5–§8.6) computable at all.
+The decisive difference between these conditions is structural rather than in content quality: every B-condition answer carries a signature chain — one signature per retrieved contribution plus the operator's — while A and C carry none. That property, not the recall margin, is what makes attribution and payouts (§5, §8.5–§8.6) computable at all.
+
+**Grounding on knowledge the base lacks.** The narrow margin above is a consequence of headroom, not of grounding being weak. To isolate the effect, a second experiment uses eight *invented* facts — specific and plausible but fictional, so no pretrained model can have memorized them — each posed to the bare model and again with the fact supplied as a reference (full table in [docs/benchmarks/novelty.md](benchmarks/novelty.md)):
+
+| Condition | Mean gold-fact recall |
+| --- | ---: |
+| Base model | 0.23 |
+| Grounded | 0.92 |
+
+Grounding lifts recall from 0.23 to 0.92 — a **+0.69** gain. The residual 0.23 in the base condition is the coarse keyword judge crediting generic tokens the model guesses (e.g. "Byzantine", "associativity"); on the purely invented terms (*melanoquin*, the Cindervault re-sharding rule) the base scores zero. The contrast with the seeded result is the finding for Claim 2: grounding produces a large, measurable gain precisely where the base model is ignorant, and little where it is not. A production network's value therefore depends on sourcing contributions *outside* the base model's training distribution — recent, niche, proprietary, or otherwise unmemorized knowledge — which is also where the contributor commons has its natural advantage.
 
 ### 8.4 Claim 3 — Refusal over hallucination on out-of-domain questions
 
@@ -549,7 +558,7 @@ The current foundation-model market produces remarkable technology and concentra
 
 The proposition rests on three claims, and the evidence reported here speaks to each unevenly.
 
-1. **Layered retrieval over a swappable open base model is a viable serving architecture.** The routing and refusal mechanisms are demonstrated (§8.2, §8.4). The quality advantage of grounding over a strong base model, however, is *not* established on the present corpus: measured gold-fact recall shows only a marginal lift (§8.3), because the seeded facts lie within the base model's existing knowledge. Grounding's measurable value appears where the base model is deficient (§8.7), and a quantitative comparison against closed retrieval products remains to be run. This is the claim with the weakest current support.
+1. **Layered retrieval over a swappable open base model is a viable serving architecture.** The routing and refusal mechanisms are demonstrated (§8.2, §8.4). Grounding's quality effect is conditional: marginal on facts the base model already knows, but large where it does not — a +0.69 gold-recall gain on invented facts (§8.3). The practical implication is that the network's value comes from knowledge outside the base model's training distribution, not from re-deriving what the base already contains. A direct quality comparison against closed retrieval products is the main piece of evidence still missing for this claim.
 
 2. **Per-claim signed governance makes attribution and payouts computable.** This is the strongest result: verification is cryptographic and reproducible (§8.5), credit is measurable and resists the standard manipulations (§8.6), and the same proof chain that lets a user audit an answer drives the payout ledger.
 
