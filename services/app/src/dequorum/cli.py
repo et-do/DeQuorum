@@ -258,6 +258,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "gold-annotated incl. paraphrase variants — larger faithfulness N)",
     )
     attrib.add_argument(
+        "--judge",
+        choices=("recall", "llm"),
+        default="recall",
+        help="Faithfulness judge: 'recall' (gold-fact overlap, deterministic) "
+        "or 'llm' (LLM-as-judge — rules out a too-coarse judge as the cause "
+        "of a weak correlation)",
+    )
+    attrib.add_argument(
         "--limit", type=int, default=None, help="Run only the first N questions"
     )
     attrib.add_argument(
@@ -839,13 +847,12 @@ def _cmd_attribution_bench(args: argparse.Namespace) -> int:
         run_attribution_benchmark,
         write_attribution_report,
     )
-    from dequorum.eval import KeywordRecallJudge
+    from dequorum.eval import KeywordRecallJudge, LLMJudge
 
     with open_category_store() as cs:
         categories = tuple(cs.routable())
     router = _build_router(categories, args.router, args.min_score)
     embedder = SentenceTransformerEmbedder()
-    judge = KeywordRecallJudge()
 
     if args.mock:
         model: MockBaseModel | OllamaBaseModel = MockBaseModel()
@@ -863,6 +870,8 @@ def _cmd_attribution_bench(args: argparse.Namespace) -> int:
             num_predict=192,
         )
         model_label = resolve_ollama_tag(args.model or DEFAULT_BASE_MODEL_ID)
+
+    judge = LLMJudge(model) if args.judge == "llm" else KeywordRecallJudge()
 
     if args.questions == "gold":
         from dequorum.eval import gold_questions
