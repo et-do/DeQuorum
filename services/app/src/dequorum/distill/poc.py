@@ -92,6 +92,7 @@ def train_lora(
     from peft import LoraConfig, get_peft_model
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     tok = AutoTokenizer.from_pretrained(base_id)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
@@ -105,6 +106,7 @@ def train_lora(
             task_type="CAUSAL_LM",
         ),
     )
+    model.to(device)
     model.train()
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=lr)
     for _ in range(epochs):
@@ -116,7 +118,9 @@ def train_lora(
                 ],
                 tokenize=False,
             )
-            enc = tok(text, return_tensors="pt", truncation=True, max_length=max_len)
+            enc = tok(
+                text, return_tensors="pt", truncation=True, max_length=max_len
+            ).to(device)
             loss = model(**enc, labels=enc["input_ids"]).loss
             loss.backward()
             opt.step()
@@ -133,7 +137,7 @@ def generate(model, tok, prompt: str, *, max_new_tokens: int = 64) -> str:
         tokenize=False,
         add_generation_prompt=True,
     )
-    enc = tok(text, return_tensors="pt")
+    enc = tok(text, return_tensors="pt").to(model.device)
     with torch.no_grad():
         out = model.generate(**enc, max_new_tokens=max_new_tokens, do_sample=False)
     return tok.decode(out[0][enc["input_ids"].shape[1] :], skip_special_tokens=True)
@@ -144,10 +148,12 @@ def base_generator(base_id: str) -> Callable[[str], str]:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     tok = AutoTokenizer.from_pretrained(base_id)
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token
     model = AutoModelForCausalLM.from_pretrained(base_id, torch_dtype=torch.float32)
+    model.to(device)
 
     def gen(prompt: str) -> str:
         return generate(model, tok, prompt)

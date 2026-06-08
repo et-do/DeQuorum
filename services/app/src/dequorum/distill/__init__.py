@@ -13,6 +13,12 @@ pure helpers stay importable without them.
 
 from __future__ import annotations
 
+from dequorum.distill.experiments import (
+    attributable_fraction,
+    entanglement_score,
+    forgetting_tax,
+    knowledge_gain,
+)
 from dequorum.distill.poc import (
     TrainingExample,
     attribution_delta,
@@ -22,7 +28,11 @@ from dequorum.distill.poc import (
 
 __all__ = [
     "TrainingExample",
+    "attributable_fraction",
     "attribution_delta",
     "build_examples",
+    "entanglement_score",
     "exclude_contributor",
+    "forgetting_tax",
+    "knowledge_gain",
 ]

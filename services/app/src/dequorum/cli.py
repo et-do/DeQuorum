@@ -312,6 +312,36 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_database_url_arg(distill)
 
+    dattr = sub.add_parser(
+        "distill-attribution",
+        help="Per-contributor attribution through distillation + gain + "
+        "forgetting tax, on the novel-fact corpus (no DB)",
+    )
+    dattr.add_argument("--base", default="Qwen/Qwen2.5-0.5B-Instruct")
+    dattr.add_argument("--epochs", type=int, default=4)
+    dattr.add_argument("--limit", type=int, default=None, help="First N facts")
+    dattr.add_argument("--output", default="docs/benchmarks/distill_attribution.md")
+
+    dcompose = sub.add_parser(
+        "distill-compose",
+        help="Train two domain adapters on disjoint facts, compose, and test "
+        "per-adapter attribution (no DB)",
+    )
+    dcompose.add_argument("--base", default="Qwen/Qwen2.5-0.5B-Instruct")
+    dcompose.add_argument("--epochs", type=int, default=4)
+    dcompose.add_argument("--limit", type=int, default=None, help="First N facts")
+    dcompose.add_argument("--output", default="docs/benchmarks/distill_compose.md")
+
+    coverage = sub.add_parser(
+        "coverage-bench",
+        help="Validate the provenance-coverage meter: base recall on known vs "
+        "novel facts (no DB)",
+    )
+    coverage.add_argument("--mock", action="store_true", help="Use mock model")
+    coverage.add_argument("--model", default="", help="Ollama model id/tag")
+    coverage.add_argument("--host", default="http://localhost:11434")
+    coverage.add_argument("--output", default="docs/benchmarks/coverage.md")
+
     novelty = sub.add_parser(
         "novelty-bench",
         help="Grounding lift on invented facts the base model can't know (no DB)",
@@ -1055,6 +1085,285 @@ def _cmd_distill_poc(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_distill_attribution(args: argparse.Namespace) -> int:
+    """E1+E2+E3: per-contributor attribution through distillation, knowledge
+    gain, and the forgetting tax — on the novel-fact corpus (no DB)."""
+    import gc
+
+    import torch
+
+    from dequorum.benchmark.novelty import NOVELTY_FACTS
+    from dequorum.benchmark.questions import SEED_QUESTIONS
+    from dequorum.distill import (
+        TrainingExample,
+        attributable_fraction,
+        entanglement_score,
+        forgetting_tax,
+        knowledge_gain,
+    )
+    from dequorum.distill.poc import base_generator, generate, train_lora
+    from dequorum.eval import KeywordRecallJudge, gold_for
+
+    judge = KeywordRecallJudge()
+    facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+    examples = [
+        TrainingExample(
+            prompt=f.query,
+            completion=f.note,
+            contributor_id=f"dq:nov-{i}",
+            contribution_id=f"nov-{i}",
+        )
+        for i, f in enumerate(facts)
+    ]
+    nov_items = [(f.query, f.gold) for f in facts]
+    # Control = facts the base already knows (seeded), to measure forgetting.
+    control = [(q.text, gold_for(q.text)) for q in SEED_QUESTIONS if gold_for(q.text)]
+
+    def recall(gen, items) -> list[float]:
+        return [judge.score(query=q, answer=gen(q), reference=g) for q, g in items]
+
+    def free_cuda() -> None:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def train_and_recall(ex) -> tuple[list[float], list[float]]:
+        """Train a LoRA and measure recall on the novel + control sets. The
+        model is local, so it falls out of scope on return and `free_cuda()`
+        can reclaim the GPU before the next training run."""
+        m, t = train_lora(ex, base_id=args.base, epochs=args.epochs)
+        return (
+            recall(lambda p: generate(m, t, p), nov_items),
+            recall(lambda p: generate(m, t, p), control),
+        )
+
+    print("Baseline (no adapter)...")
+    bg = base_generator(args.base)
+    base_nov = recall(bg, nov_items)
+    base_ctrl = recall(bg, control)
+
+    print("Training LoRA on full corpus...")
+    all_nov, all_ctrl = train_and_recall(examples)
+    free_cuda()
+
+    minus: list[list[float]] = []
+    for i in range(len(facts)):
+        print(f"Training LoRA without contributor {i + 1}/{len(facts)}...")
+        ex_i = [e for e in examples if e.contributor_id != f"dq:nov-{i}"]
+        nov_i, _ = train_and_recall(ex_i)
+        minus.append(nov_i)
+        free_cuda()
+
+    attrib = [
+        attributable_fraction(
+            base=base_nov[j], with_all=all_nov[j], without_own=minus[j][j]
+        )
+        for j in range(len(facts))
+    ]
+    ent = entanglement_score(all_nov, minus)
+    gain = knowledge_gain(base_nov, all_nov)
+    forget = forgetting_tax(base_ctrl, all_ctrl)
+    mean_attrib = sum(attrib) / len(attrib) if attrib else 0.0
+
+    lines = [
+        "# Distillation: attribution, gain, and forgetting",
+        "",
+        f"Base: `{args.base}` · epochs {args.epochs} · contributors/facts {len(facts)}",
+        "",
+        "## Knowledge gain (E2) — does the corpus train into the weights?",
+        "",
+        f"- mean novel-fact recall, base: {sum(base_nov) / len(base_nov):.3f}",
+        f"- mean novel-fact recall, trained: {sum(all_nov) / len(all_nov):.3f}",
+        f"- **learned gain: {gain:+.3f}**",
+        "",
+        "## Per-contributor attribution (E1) — is each fact owned by its author?",
+        "",
+        "| fact | base | trained | trained-minus-own | attributable |",
+        "| ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for j in range(len(facts)):
+        lines.append(
+            f"| {j} | {base_nov[j]:.2f} | {all_nov[j]:.2f} | "
+            f"{minus[j][j]:.2f} | {attrib[j]:.2f} |"
+        )
+    lines += [
+        "",
+        f"- **mean attributable fraction: {mean_attrib:.3f}**",
+        f"- **entanglement (off-target disturbance): {ent:.4f}** "
+        "(≈0 ⇒ removing one contributor leaves the others' knowledge intact — "
+        "clean, certifiable ownership)",
+        "",
+        "## Forgetting tax (E3) — does owning knowledge damage the base?",
+        "",
+        f"- mean recall on base-known control set, base: "
+        f"{sum(base_ctrl) / len(base_ctrl):.3f}",
+        f"- mean recall on base-known control set, after training: "
+        f"{sum(all_ctrl) / len(all_ctrl):.3f}",
+        f"- **forgetting tax: {forget:+.3f}** (negative ⇒ training on the "
+        "corpus degraded unrelated base knowledge)",
+        "",
+    ]
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines))
+    print(f"\nReport written: {out}")
+    print(
+        f"gain={gain:+.3f}  mean_attributable={mean_attrib:.3f}  "
+        f"entanglement={ent:.4f}  forgetting={forget:+.3f}"
+    )
+    return 0
+
+
+def _cmd_distill_compose(args: argparse.Namespace) -> int:
+    """E4: train two domain adapters on disjoint fact sets, compose them, and
+    check both knowledge sets are present and each remains attributable."""
+    import tempfile
+
+    import torch
+    from peft import PeftModel
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    from dequorum.benchmark.novelty import NOVELTY_FACTS
+    from dequorum.distill.poc import TrainingExample, generate, train_lora
+    from dequorum.eval import KeywordRecallJudge
+
+    judge = KeywordRecallJudge()
+    facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+    half = len(facts) // 2
+    groups = {"A": list(enumerate(facts))[:half], "B": list(enumerate(facts))[half:]}
+
+    def examples_for(group) -> list[TrainingExample]:
+        return [
+            TrainingExample(
+                prompt=f.query,
+                completion=f.note,
+                contributor_id=f"dq:nov-{i}",
+                contribution_id=f"nov-{i}",
+            )
+            for i, f in group
+        ]
+
+    tmp = tempfile.mkdtemp()
+    for name in ("A", "B"):
+        print(f"Training adapter {name}...")
+        m, _ = train_lora(
+            examples_for(groups[name]), base_id=args.base, epochs=args.epochs
+        )
+        m.save_pretrained(f"{tmp}/{name}")
+        del m
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    tok = AutoTokenizer.from_pretrained(args.base)
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    base = AutoModelForCausalLM.from_pretrained(args.base, torch_dtype=torch.float32)
+    base.to(device)
+    model = PeftModel.from_pretrained(base, f"{tmp}/A", adapter_name="A")
+    model.load_adapter(f"{tmp}/B", adapter_name="B")
+
+    def recall_group(group) -> float:
+        vals = [
+            judge.score(
+                query=f.query, answer=generate(model, tok, f.query), reference=f.gold
+            )
+            for _, f in group
+        ]
+        return sum(vals) / len(vals) if vals else 0.0
+
+    model.set_adapter(["A", "B"])
+    both_a, both_b = recall_group(groups["A"]), recall_group(groups["B"])
+    model.set_adapter(["A"])  # ablate B
+    ablate_a, ablate_b = recall_group(groups["A"]), recall_group(groups["B"])
+
+    lines = [
+        "# Distillation: adapter composition (E4)",
+        "",
+        f"Base: `{args.base}` · epochs {args.epochs} · "
+        f"adapter A facts {len(groups['A'])} · adapter B facts {len(groups['B'])}",
+        "",
+        "| condition | recall(A facts) | recall(B facts) |",
+        "| --- | ---: | ---: |",
+        f"| A+B composed | {both_a:.2f} | {both_b:.2f} |",
+        f"| A only (B ablated) | {ablate_a:.2f} | {ablate_b:.2f} |",
+        "",
+        "Composition holds if A+B recalls both sets; per-adapter attribution "
+        "holds if ablating B drops B's facts while leaving A's intact.",
+        "",
+    ]
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines))
+    print(f"\nReport written: {out}")
+    print(
+        f"composed A={both_a:.2f} B={both_b:.2f} · ablate-B -> A={ablate_a:.2f} "
+        f"B={ablate_b:.2f}"
+    )
+    return 0
+
+
+def _cmd_coverage_bench(args: argparse.Namespace) -> int:
+    """E6: validate the provenance-coverage instrument — base recall should be
+    high on base-known facts and low on novel facts (no training, no DB)."""
+    from dequorum.benchmark.novelty import NOVELTY_FACTS
+    from dequorum.benchmark.questions import SEED_QUESTIONS
+    from dequorum.eval import KeywordRecallJudge, gold_for
+    from dequorum.inference.base_model import MockBaseModel, OllamaBaseModel
+    from dequorum.inference.models import DEFAULT_BASE_MODEL_ID, resolve_ollama_tag
+
+    judge = KeywordRecallJudge()
+    if args.mock:
+        model: object = MockBaseModel()
+        label = "mock"
+    else:
+        model = OllamaBaseModel(
+            model=args.model, host=args.host, timeout_seconds=300.0, num_predict=192
+        )
+        label = resolve_ollama_tag(args.model or DEFAULT_BASE_MODEL_ID)
+
+    system = "You are a precise assistant. Answer the question concisely."
+
+    def base_recall(items) -> float:
+        vals = [
+            judge.score(
+                query=q,
+                answer=model.complete(system=system, user=q),  # type: ignore[attr-defined]
+                reference=g,
+            )
+            for q, g in items
+        ]
+        return sum(vals) / len(vals) if vals else 0.0
+
+    known = [(q.text, gold_for(q.text)) for q in SEED_QUESTIONS if gold_for(q.text)]
+    novel = [(f.query, f.gold) for f in NOVELTY_FACTS]
+    known_cov, novel_cov = base_recall(known), base_recall(novel)
+
+    lines = [
+        "# Provenance-coverage instrument (E6)",
+        "",
+        f"Model: `{label}`",
+        "",
+        "The instrument measures whether the base model already knows a fact "
+        "(high base recall ⇒ the base covers it; low ⇒ only the commons can). "
+        "It is valid if it separates known from novel facts.",
+        "",
+        f"- mean base recall, **base-known facts** (n={len(known)}): {known_cov:.3f}",
+        f"- mean base recall, **novel facts** (n={len(novel)}): {novel_cov:.3f}",
+        f"- **separation: {known_cov - novel_cov:+.3f}** "
+        "(large ⇒ the meter reliably tells borrowed knowledge from commons-only)",
+        "",
+    ]
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines))
+    print(f"\nReport written: {out}")
+    print(
+        f"known={known_cov:.3f}  novel={novel_cov:.3f}  sep={known_cov - novel_cov:+.3f}"
+    )
+    return 0
+
+
 def _cmd_novelty_bench(args: argparse.Namespace) -> int:
     """Grounding lift on invented facts; needs only a model (no DB)."""
     from dequorum.benchmark.novelty import (
@@ -1163,6 +1472,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_attribution_bench(args)
     if args.cmd == "distill-poc":
         return _cmd_distill_poc(args)
+    if args.cmd == "distill-attribution":
+        return _cmd_distill_attribution(args)
+    if args.cmd == "distill-compose":
+        return _cmd_distill_compose(args)
+    if args.cmd == "coverage-bench":
+        return _cmd_coverage_bench(args)
     if args.cmd == "cost-model":
         return _cmd_cost_model(args)
     if args.cmd == "novelty-bench":
