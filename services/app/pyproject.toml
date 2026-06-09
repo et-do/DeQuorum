@@ -36,7 +36,11 @@ dependencies = [
     "firebase-admin>=6.5",
     # Embeddings (CPU-only torch via [tool.uv.sources] below — saves ~3 GB)
     "sentence-transformers>=5.0",
-    "numpy>=2.4",
+    # Floor kept low on purpose: a high floor forces pip to upgrade numpy
+    # mid-session on hosts that ship an older 2.x (e.g. Colab), which breaks
+    # the running kernel (numpy C-extension vs Python mismatch). Nothing here
+    # needs >=2.4.
+    "numpy>=1.26",
 ]
 
 # Optional extras. Install any combination with
