@@ -289,6 +289,7 @@ def _build_parser() -> argparse.ArgumentParser:
     distill.add_argument(
         "--limit", type=int, default=None, help="First N facts (novelty corpus only)"
     )
+    distill.add_argument("--seed", type=int, default=0, help="Random seed")
     distill.add_argument(
         "--base",
         default="Qwen/Qwen2.5-0.5B-Instruct",
@@ -320,6 +321,10 @@ def _build_parser() -> argparse.ArgumentParser:
     dattr.add_argument("--base", default="Qwen/Qwen2.5-0.5B-Instruct")
     dattr.add_argument("--epochs", type=int, default=4)
     dattr.add_argument("--limit", type=int, default=None, help="First N facts")
+    dattr.add_argument("--seed", type=int, default=0, help="Base random seed")
+    dattr.add_argument(
+        "--repeats", type=int, default=1, help="Re-run with seed+0..N-1 for mean±range"
+    )
     dattr.add_argument("--output", default="docs/benchmarks/distill_attribution.md")
 
     dcompose = sub.add_parser(
@@ -330,6 +335,7 @@ def _build_parser() -> argparse.ArgumentParser:
     dcompose.add_argument("--base", default="Qwen/Qwen2.5-0.5B-Instruct")
     dcompose.add_argument("--epochs", type=int, default=4)
     dcompose.add_argument("--limit", type=int, default=None, help="First N facts")
+    dcompose.add_argument("--seed", type=int, default=0, help="Random seed")
     dcompose.add_argument("--output", default="docs/benchmarks/distill_compose.md")
 
     coverage = sub.add_parser(
@@ -956,10 +962,12 @@ def _cmd_distill_poc(args: argparse.Namespace) -> int:
         TrainingExample,
         base_generator,
         generate,
+        seed_everything,
         train_lora,
     )
     from dequorum.eval import KeywordRecallJudge
 
+    seed_everything(getattr(args, "seed", 0))
     judge = KeywordRecallJudge()
     corpus = getattr(args, "corpus", "seed")
 
@@ -1101,7 +1109,12 @@ def _cmd_distill_attribution(args: argparse.Namespace) -> int:
         forgetting_tax,
         knowledge_gain,
     )
-    from dequorum.distill.poc import base_generator, generate, train_lora
+    from dequorum.distill.poc import (
+        base_generator,
+        generate,
+        seed_everything,
+        train_lora,
+    )
     from dequorum.eval import KeywordRecallJudge, gold_for
 
     judge = KeywordRecallJudge()
@@ -1116,91 +1129,112 @@ def _cmd_distill_attribution(args: argparse.Namespace) -> int:
         for i, f in enumerate(facts)
     ]
     nov_items = [(f.query, f.gold) for f in facts]
+    # Held-out paraphrases (never trained on) — recall here vs on the training
+    # query separates real knowledge transfer from memorizing the prompt.
+    para_items = [(f.paraphrase, f.gold) for f in facts]
     # Control = facts the base already knows (seeded), to measure forgetting.
     control = [(q.text, gold_for(q.text)) for q in SEED_QUESTIONS if gold_for(q.text)]
 
     def recall(gen, items) -> list[float]:
         return [judge.score(query=q, answer=gen(q), reference=g) for q, g in items]
 
+    def mean(xs: list[float]) -> float:
+        return sum(xs) / len(xs) if xs else 0.0
+
     def free_cuda() -> None:
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    def train_and_recall(ex) -> tuple[list[float], list[float]]:
-        """Train a LoRA and measure recall on the novel + control sets. The
-        model is local, so it falls out of scope on return and `free_cuda()`
-        can reclaim the GPU before the next training run."""
+    def train_and_recall(ex, with_para: bool = False):
+        """Train a LoRA and measure recall. Model is local → freed on return."""
         m, t = train_lora(ex, base_id=args.base, epochs=args.epochs)
-        return (
-            recall(lambda p: generate(m, t, p), nov_items),
-            recall(lambda p: generate(m, t, p), control),
-        )
+        nov = recall(lambda p: generate(m, t, p), nov_items)
+        ctrl = recall(lambda p: generate(m, t, p), control)
+        para = recall(lambda p: generate(m, t, p), para_items) if with_para else []
+        return nov, ctrl, para
 
-    print("Baseline (no adapter)...")
-    bg = base_generator(args.base)
-    base_nov = recall(bg, nov_items)
-    base_ctrl = recall(bg, control)
-
-    print("Training LoRA on full corpus...")
-    all_nov, all_ctrl = train_and_recall(examples)
-    free_cuda()
-
-    minus: list[list[float]] = []
-    for i in range(len(facts)):
-        print(f"Training LoRA without contributor {i + 1}/{len(facts)}...")
-        ex_i = [e for e in examples if e.contributor_id != f"dq:nov-{i}"]
-        nov_i, _ = train_and_recall(ex_i)
-        minus.append(nov_i)
+    def run_once(seed: int) -> dict:
+        seed_everything(seed)
+        print(f"  [seed {seed}] baseline...")
+        bg = base_generator(args.base)
+        base_nov = recall(bg, nov_items)
+        base_ctrl = recall(bg, control)
+        del bg
         free_cuda()
+        print(f"  [seed {seed}] training on full corpus...")
+        all_nov, all_ctrl, all_para = train_and_recall(examples, with_para=True)
+        free_cuda()
+        minus: list[list[float]] = []
+        for i in range(len(facts)):
+            print(f"  [seed {seed}] minus contributor {i + 1}/{len(facts)}...")
+            ex_i = [e for e in examples if e.contributor_id != f"dq:nov-{i}"]
+            nov_i, _, _ = train_and_recall(ex_i)
+            minus.append(nov_i)
+            free_cuda()
+        attrib = [
+            attributable_fraction(
+                base=base_nov[j], with_all=all_nov[j], without_own=minus[j][j]
+            )
+            for j in range(len(facts))
+        ]
+        return {
+            "base_nov": base_nov,
+            "all_nov": all_nov,
+            "minus": minus,
+            "attrib": attrib,
+            "gain": knowledge_gain(base_nov, all_nov),
+            "mean_attrib": mean(attrib),
+            "entanglement": entanglement_score(all_nov, minus),
+            "forget": forgetting_tax(base_ctrl, all_ctrl),
+            "canonical": mean(all_nov),
+            "paraphrase": mean(all_para),
+            "base_ctrl": mean(base_ctrl),
+            "all_ctrl": mean(all_ctrl),
+        }
 
-    attrib = [
-        attributable_fraction(
-            base=base_nov[j], with_all=all_nov[j], without_own=minus[j][j]
-        )
-        for j in range(len(facts))
-    ]
-    ent = entanglement_score(all_nov, minus)
-    gain = knowledge_gain(base_nov, all_nov)
-    forget = forgetting_tax(base_ctrl, all_ctrl)
-    mean_attrib = sum(attrib) / len(attrib) if attrib else 0.0
+    runs = [run_once(args.seed + r) for r in range(args.repeats)]
+    r0 = runs[0]
+
+    def agg(key: str) -> str:
+        vals = [r[key] for r in runs]
+        if len(vals) == 1:
+            return f"{vals[0]:+.3f}" if vals[0] < 0 else f"{vals[0]:.3f}"
+        return f"{mean(vals):.3f}  [min {min(vals):.3f}, max {max(vals):.3f}]"
 
     lines = [
-        "# Distillation: attribution, gain, and forgetting",
+        "# Distillation: attribution, gain, forgetting, and memorization",
         "",
-        f"Base: `{args.base}` · epochs {args.epochs} · contributors/facts {len(facts)}",
+        f"Base: `{args.base}` · epochs {args.epochs} · facts {len(facts)} · "
+        f"seed {args.seed} · repeats {args.repeats}",
         "",
-        "## Knowledge gain (E2) — does the corpus train into the weights?",
+        "## Headline metrics"
+        + (f" (mean over {args.repeats} seeds)" if args.repeats > 1 else ""),
         "",
-        f"- mean novel-fact recall, base: {sum(base_nov) / len(base_nov):.3f}",
-        f"- mean novel-fact recall, trained: {sum(all_nov) / len(all_nov):.3f}",
-        f"- **learned gain: {gain:+.3f}**",
+        f"- **knowledge gain (E2):** {agg('gain')}",
+        f"- **mean attributable fraction (E1):** {agg('mean_attrib')}",
+        f"- **entanglement (E1, ≈0 is good):** {agg('entanglement')}",
+        f"- **forgetting tax (E3):** {agg('forget')}",
+        f"- **memorization check — trained-query recall:** {agg('canonical')}",
+        f"- **memorization check — held-out paraphrase recall:** {agg('paraphrase')} "
+        "(close to trained-query ⇒ real knowledge, not prompt memorization)",
         "",
-        "## Per-contributor attribution (E1) — is each fact owned by its author?",
+        f"## Per-contributor attribution (E1) — seed {args.seed}",
         "",
         "| fact | base | trained | trained-minus-own | attributable |",
         "| ---: | ---: | ---: | ---: | ---: |",
     ]
     for j in range(len(facts)):
         lines.append(
-            f"| {j} | {base_nov[j]:.2f} | {all_nov[j]:.2f} | "
-            f"{minus[j][j]:.2f} | {attrib[j]:.2f} |"
+            f"| {j} | {r0['base_nov'][j]:.2f} | {r0['all_nov'][j]:.2f} | "
+            f"{r0['minus'][j][j]:.2f} | {r0['attrib'][j]:.2f} |"
         )
     lines += [
         "",
-        f"- **mean attributable fraction: {mean_attrib:.3f}**",
-        f"- **entanglement (off-target disturbance): {ent:.4f}** "
-        "(≈0 ⇒ removing one contributor leaves the others' knowledge intact — "
-        "clean, certifiable ownership)",
-        "",
-        "## Forgetting tax (E3) — does owning knowledge damage the base?",
-        "",
-        f"- mean recall on base-known control set, base: "
-        f"{sum(base_ctrl) / len(base_ctrl):.3f}",
-        f"- mean recall on base-known control set, after training: "
-        f"{sum(all_ctrl) / len(all_ctrl):.3f}",
-        f"- **forgetting tax: {forget:+.3f}** (negative ⇒ training on the "
-        "corpus degraded unrelated base knowledge)",
+        "Entanglement ≈ 0 means removing one contributor leaves the others' "
+        "knowledge intact — the property required for certifiable ownership. The "
+        "forgetting tax is the change in recall on base-known facts after training; "
+        "negative means owning the corpus degraded unrelated knowledge.",
         "",
     ]
     out = Path(args.output)
@@ -1208,8 +1242,9 @@ def _cmd_distill_attribution(args: argparse.Namespace) -> int:
     out.write_text("\n".join(lines))
     print(f"\nReport written: {out}")
     print(
-        f"gain={gain:+.3f}  mean_attributable={mean_attrib:.3f}  "
-        f"entanglement={ent:.4f}  forgetting={forget:+.3f}"
+        f"gain={agg('gain')}  attributable={agg('mean_attrib')}  "
+        f"entanglement={agg('entanglement')}  forgetting={agg('forget')}  "
+        f"paraphrase={agg('paraphrase')}"
     )
     return 0
 
@@ -1224,8 +1259,15 @@ def _cmd_distill_compose(args: argparse.Namespace) -> int:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     from dequorum.benchmark.novelty import NOVELTY_FACTS
-    from dequorum.distill.poc import TrainingExample, generate, train_lora
+    from dequorum.distill.poc import (
+        TrainingExample,
+        generate,
+        seed_everything,
+        train_lora,
+    )
     from dequorum.eval import KeywordRecallJudge
+
+    seed_everything(getattr(args, "seed", 0))
 
     judge = KeywordRecallJudge()
     facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]

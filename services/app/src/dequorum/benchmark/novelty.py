@@ -32,12 +32,15 @@ _GROUNDED_SYSTEM = (
 
 @dataclass(frozen=True, slots=True)
 class NoveltyFact:
-    """An invented fact: the reference note, a question over it, and the gold
-    key phrases a correct answer must contain."""
+    """An invented fact: the reference note, a question over it, the gold key
+    phrases a correct answer must contain, and a held-out paraphrase of the
+    question. The paraphrase is never trained on; recall on it separates real
+    knowledge transfer from memorizing the exact training prompt."""
 
     note: str
     query: str
     gold: tuple[str, ...]
+    paraphrase: str = ""
 
 
 # Invented facts across several domains. Each is specific and plausible but
@@ -49,6 +52,8 @@ NOVELTY_FACTS: tuple[NoveltyFact, ...] = (
         query="How large are frame headers in the Halberd transport protocol, and "
         "what does it run over?",
         gold=("12", "byte", "UDP"),
+        paraphrase="Which transport does Halberd use, and how many bytes is each "
+        "of its frame headers?",
     ),
     NoveltyFact(
         note="In the Pyrolib library, pyro.bind(fn, *, retries) wraps a callable so "
@@ -57,6 +62,8 @@ NOVELTY_FACTS: tuple[NoveltyFact, ...] = (
         query="In Pyrolib, what does pyro.bind retry on and what is its initial "
         "backoff?",
         gold=("PyroTimeout", "50", "exponential"),
+        paraphrase="What's the starting backoff for pyro.bind, what kind of backoff "
+        "is it, and which exception does it retry?",
     ),
     NoveltyFact(
         note="The Marrow-Quist bound states that a gossip protocol over n nodes "
@@ -64,30 +71,39 @@ NOVELTY_FACTS: tuple[NoveltyFact, ...] = (
         "n/5 Byzantine faults.",
         query="What Byzantine fault threshold does the Marrow-Quist bound assume?",
         gold=("n/5", "Byzantine"),
+        paraphrase="Up to what fraction of nodes can be Byzantine for the "
+        "Marrow-Quist bound to hold?",
     ),
     NoveltyFact(
         note="Setting vault.seal_threshold above 0.8 in Cindervault triggers "
         "automatic re-sharding of the secret store across all replicas.",
         query="What happens when vault.seal_threshold exceeds 0.8 in Cindervault?",
         gold=("re-shard", "replicas"),
+        paraphrase="In Cindervault, what does raising vault.seal_threshold past 0.8 "
+        "do to the secret store?",
     ),
     NoveltyFact(
         note="Zelanocytes are specialized cells in the Tarsk gland that secrete "
         "melanoquin, regulating circadian pigment shifts in deep-sea cephalopods.",
         query="What do zelanocytes secrete, and in which gland are they found?",
         gold=("melanoquin", "Tarsk"),
+        paraphrase="Which gland holds the cells that produce melanoquin?",
     ),
     NoveltyFact(
         note="Under the GX-9 imaging standard, every frame must embed a 256-bit "
         "provenance tag in the least significant bits of the alpha channel.",
         query="Where does the GX-9 imaging standard store its provenance tag?",
         gold=("alpha", "least significant", "256"),
+        paraphrase="In GX-9, how many bits is the provenance tag and which channel's "
+        "least-significant bits hold it?",
     ),
     NoveltyFact(
         note="The Drelb config key merge.fanout caps how many sibling branches "
         "the Drelb planner fuses in one pass; its default is 6 and the maximum is 31.",
         query="What is the default value of merge.fanout in the Drelb planner?",
         gold=("6", "fanout"),
+        paraphrase="By default, how many sibling branches does Drelb's merge.fanout "
+        "fuse per pass?",
     ),
     NoveltyFact(
         note="Quenby's law of cache coherence holds that a write-back cache with "
@@ -96,6 +112,8 @@ NOVELTY_FACTS: tuple[NoveltyFact, ...] = (
         query="Per Quenby's law, how deep can the store buffer be relative to "
         "associativity under the Tolan protocol?",
         gold=("2", "associativity"),
+        paraphrase="Under the Tolan protocol, Quenby's law caps store-buffer depth "
+        "at what multiple of associativity?",
     ),
 )
 

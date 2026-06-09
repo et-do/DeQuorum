@@ -77,6 +77,21 @@ def attribution_delta(
 # --- compute-heavy training/generation (lazy ML imports) ----------------
 
 
+def seed_everything(seed: int) -> None:
+    """Make a training run reproducible: seed Python, NumPy, and torch (CPU +
+    CUDA). Reported in benchmark output so a number can be reproduced exactly."""
+    import random
+
+    import numpy as np
+    import torch
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
 def train_lora(
     examples: Sequence[TrainingExample],
     *,

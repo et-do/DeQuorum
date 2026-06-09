@@ -34,3 +34,11 @@ def test_grounding_lift_is_measured() -> None:
     assert rep.mean_grounded > rep.mean_base
     assert rep.lift > 0
     assert 0.0 <= rep.mean_base <= 1.0 and 0.0 <= rep.mean_grounded <= 1.0
+
+
+def test_every_fact_has_a_distinct_paraphrase() -> None:
+    # The memorization test needs a held-out paraphrase per fact, different
+    # from the training query.
+    for f in NOVELTY_FACTS:
+        assert f.paraphrase, f"missing paraphrase: {f.query}"
+        assert f.paraphrase != f.query
