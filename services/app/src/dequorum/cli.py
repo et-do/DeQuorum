@@ -1339,9 +1339,12 @@ def _cmd_distill_compose(args: argparse.Namespace) -> int:
         ]
         return sum(vals) / len(vals) if vals else 0.0
 
-    model.set_adapter(["A", "B"])
+    # Activate multiple adapters at once on the underlying tuner: PeftModel
+    # .set_adapter() takes a single name, but LoraModel.set_adapter() accepts a
+    # list and sums the active adapters' deltas in forward (true composition).
+    model.base_model.set_adapter(["A", "B"])
     both_a, both_b = recall_group(groups["A"]), recall_group(groups["B"])
-    model.set_adapter(["A"])  # ablate B
+    model.base_model.set_adapter(["A"])  # ablate B
     ablate_a, ablate_b = recall_group(groups["A"]), recall_group(groups["B"])
 
     lines = [
