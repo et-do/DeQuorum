@@ -42,3 +42,14 @@ def test_every_fact_has_a_distinct_paraphrase() -> None:
     for f in NOVELTY_FACTS:
         assert f.paraphrase, f"missing paraphrase: {f.query}"
         assert f.paraphrase != f.query
+
+
+def test_false_variants_are_well_formed() -> None:
+    from dequorum.eval.judge import _norm
+
+    for f in NOVELTY_FACTS:
+        assert f.false_note and f.false_note != f.note
+        assert f.false_gold, f"missing false_gold: {f.query}"
+        fn = _norm(f.false_note)
+        for g in f.false_gold:
+            assert _norm(g) in fn, f"false_gold {g!r} not in false_note: {f.false_note}"

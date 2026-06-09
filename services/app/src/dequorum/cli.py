@@ -348,6 +348,31 @@ def _build_parser() -> argparse.ArgumentParser:
     coverage.add_argument("--host", default="http://localhost:11434")
     coverage.add_argument("--output", default="docs/benchmarks/coverage.md")
 
+    jbench = sub.add_parser(
+        "judge-bench",
+        help="Validate the quality judge: does it score correct answers above "
+        "plausible-but-wrong ones? (keyword vs LLM judge; no DB)",
+    )
+    jbench.add_argument("--mock", action="store_true", help="Use mock model")
+    jbench.add_argument("--model", default="", help="Ollama model id/tag")
+    jbench.add_argument("--host", default="http://localhost:11434")
+    jbench.add_argument(
+        "--no-llm", action="store_true", help="Keyword judge only (skip the LLM judge)"
+    )
+    jbench.add_argument("--limit", type=int, default=None, help="First N facts")
+    jbench.add_argument("--output", default="docs/benchmarks/judge.md")
+
+    fbench = sub.add_parser(
+        "falsehood-bench",
+        help="Does grounding on a plausible-but-FALSE contribution make the model "
+        "adopt the lie? (no DB)",
+    )
+    fbench.add_argument("--mock", action="store_true", help="Use mock model")
+    fbench.add_argument("--model", default="", help="Ollama model id/tag")
+    fbench.add_argument("--host", default="http://localhost:11434")
+    fbench.add_argument("--limit", type=int, default=None, help="First N facts")
+    fbench.add_argument("--output", default="docs/benchmarks/falsehood.md")
+
     novelty = sub.add_parser(
         "novelty-bench",
         help="Grounding lift on invented facts the base model can't know (no DB)",
@@ -1442,6 +1467,143 @@ def _cmd_novelty_bench(args: argparse.Namespace) -> int:
     return 0
 
 
+def _judge_bench_model(args: argparse.Namespace):
+    from dequorum.inference.base_model import MockBaseModel, OllamaBaseModel
+
+    if args.mock:
+        return MockBaseModel()
+    return OllamaBaseModel(
+        model=args.model, host=args.host, timeout_seconds=300.0, num_predict=64
+    )
+
+
+def _cmd_judge_bench(args: argparse.Namespace) -> int:
+    """Validate the quality judge: score known-correct answers (the note) vs
+    plausible-but-wrong answers (the false note) against the true gold. A good
+    judge separates them; a coarse one over-credits the wrong answer."""
+    from dequorum.benchmark.novelty import NOVELTY_FACTS
+    from dequorum.eval import KeywordRecallJudge, LLMJudge
+
+    facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+
+    def mean(xs: list[float]) -> float:
+        return sum(xs) / len(xs) if xs else 0.0
+
+    judges: dict[str, object] = {"keyword": KeywordRecallJudge()}
+    if not args.no_llm:
+        judges["llm"] = LLMJudge(_judge_bench_model(args))
+
+    lines = [
+        "# Judge validation",
+        "",
+        f"Facts: {len(facts)}. Each judge scores a correct answer (the fact's "
+        "note) and a plausible-but-wrong answer (a false variant) against the "
+        "true gold. Separation and pairwise accuracy measure how trustworthy the "
+        "judge is; the keyword judge is expected to over-credit the wrong answer "
+        "because it matches structural tokens.",
+        "",
+        "| judge | mean(correct) | mean(wrong) | separation | pairwise acc |",
+        "| --- | ---: | ---: | ---: | ---: |",
+    ]
+    summary = {}
+    for name, judge in judges.items():
+        correct = [
+            judge.score(query=f.query, answer=f.note, reference=f.gold)  # type: ignore[attr-defined]
+            for f in facts
+        ]
+        wrong = [
+            judge.score(query=f.query, answer=f.false_note, reference=f.gold)  # type: ignore[attr-defined]
+            for f in facts
+        ]
+        pair = mean(
+            [1.0 if c > w else (0.5 if c == w else 0.0) for c, w in zip(correct, wrong)]
+        )
+        sep = mean(correct) - mean(wrong)
+        summary[name] = (sep, pair)
+        lines.append(
+            f"| {name} | {mean(correct):.3f} | {mean(wrong):.3f} | "
+            f"{sep:+.3f} | {pair:.3f} |"
+        )
+    lines += [
+        "",
+        "Higher separation and pairwise accuracy mean a more trustworthy judge. "
+        "A near-zero or negative separation means the judge cannot tell correct "
+        "from plausibly-wrong, and any quality number measured with it is suspect.",
+        "",
+    ]
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines))
+    print(f"Report written: {out}")
+    for name, (sep, pair) in summary.items():
+        print(f"{name}: separation={sep:+.3f} pairwise_acc={pair:.3f}")
+    return 0
+
+
+def _cmd_falsehood_bench(args: argparse.Namespace) -> int:
+    """Does grounding on a plausible-but-FALSE contribution make the model adopt
+    the lie? Grounds on each fact's false variant and measures how often the
+    answer states the false claim — i.e. whether grounding propagates falsehood."""
+    from dequorum.benchmark.novelty import _BASE_SYSTEM, _GROUNDED_SYSTEM, NOVELTY_FACTS
+    from dequorum.eval import KeywordRecallJudge
+
+    facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+    judge = KeywordRecallJudge()
+    model = _judge_bench_model(args)
+
+    def mean(xs: list[float]) -> float:
+        return sum(xs) / len(xs) if xs else 0.0
+
+    base_false, adopt_false, keep_true = [], [], []
+    for i, f in enumerate(facts):
+        print(f"  [{i + 1}/{len(facts)}] {f.query[:70]}", flush=True)
+        base_ans = model.complete(system=_BASE_SYSTEM, user=f.query)
+        grounded = model.complete(
+            system=_GROUNDED_SYSTEM.format(note=f.false_note), user=f.query
+        )
+        base_false.append(
+            judge.score(query=f.query, answer=base_ans, reference=f.false_gold)
+        )
+        adopt_false.append(
+            judge.score(query=f.query, answer=grounded, reference=f.false_gold)
+        )
+        keep_true.append(judge.score(query=f.query, answer=grounded, reference=f.gold))
+
+    lines = [
+        "# Falsehood propagation",
+        "",
+        f"Facts: {len(facts)}. Each is grounded on a plausible-but-FALSE variant of "
+        "the contribution; we measure whether the answer adopts the false claim.",
+        "",
+        f"- base model, false claim recall (control, expect ~0): {mean(base_false):.3f}",
+        f"- **grounded-on-false, false claim recall: {mean(adopt_false):.3f}** "
+        "(high ⇒ the model adopts the lie)",
+        f"- grounded-on-false, true claim recall: {mean(keep_true):.3f}",
+        "",
+        "If grounded-on-false recall is high, grounding faithfully propagates "
+        "whatever the contribution asserts, true or false. Correctness therefore "
+        "rests entirely on the governance layer (review + voting) filtering false "
+        "contributions before they ground answers — the model provides no defense.",
+        "",
+        "| fact | base (false) | grounded (false) | grounded (true) |",
+        "| ---: | ---: | ---: | ---: |",
+    ]
+    for i in range(len(facts)):
+        lines.append(
+            f"| {i} | {base_false[i]:.2f} | {adopt_false[i]:.2f} | {keep_true[i]:.2f} |"
+        )
+    lines.append("")
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines))
+    print(f"Report written: {out}")
+    print(
+        f"base_false={mean(base_false):.3f}  adopt_false={mean(adopt_false):.3f}  "
+        f"keep_true={mean(keep_true):.3f}"
+    )
+    return 0
+
+
 def _cmd_cost_model(args: argparse.Namespace) -> int:
     """Print per-query unit economics; no database or model required."""
     from dequorum.economics import CostModel
@@ -1520,6 +1682,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_distill_compose(args)
     if args.cmd == "coverage-bench":
         return _cmd_coverage_bench(args)
+    if args.cmd == "judge-bench":
+        return _cmd_judge_bench(args)
+    if args.cmd == "falsehood-bench":
+        return _cmd_falsehood_bench(args)
     if args.cmd == "cost-model":
         return _cmd_cost_model(args)
     if args.cmd == "novelty-bench":

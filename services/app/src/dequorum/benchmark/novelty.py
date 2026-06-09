@@ -41,6 +41,14 @@ class NoveltyFact:
     query: str
     gold: tuple[str, ...]
     paraphrase: str = ""
+    # A plausible-but-FALSE variant of the note (wrong values, same shape) and
+    # the gold phrases that identify the false claim. Powers two studies:
+    #   - judge validation: a good judge scores `note` high and `false_note` low
+    #     against the true `gold` (a coarse judge over-credits the false one).
+    #   - falsehood propagation: grounding on `false_note` and detecting
+    #     `false_gold` in the answer measures whether the model adopts a lie.
+    false_note: str = ""
+    false_gold: tuple[str, ...] = ()
 
 
 # Invented facts across several domains. Each is specific and plausible but
@@ -54,6 +62,9 @@ NOVELTY_FACTS: tuple[NoveltyFact, ...] = (
         gold=("12", "byte", "UDP"),
         paraphrase="Which transport does Halberd use, and how many bytes is each "
         "of its frame headers?",
+        false_note="The Halberd transport protocol multiplexes streams over a "
+        "single TCP socket using fixed 20-byte frame headers.",
+        false_gold=("20", "TCP"),
     ),
     NoveltyFact(
         note="In the Pyrolib library, pyro.bind(fn, *, retries) wraps a callable so "
@@ -64,6 +75,9 @@ NOVELTY_FACTS: tuple[NoveltyFact, ...] = (
         gold=("PyroTimeout", "50", "exponential"),
         paraphrase="What's the starting backoff for pyro.bind, what kind of backoff "
         "is it, and which exception does it retry?",
+        false_note="In the Pyrolib library, pyro.bind retries on PyroError with "
+        "linear backoff starting at 200ms.",
+        false_gold=("PyroError", "200", "linear"),
     ),
     NoveltyFact(
         note="The Marrow-Quist bound states that a gossip protocol over n nodes "
@@ -73,6 +87,9 @@ NOVELTY_FACTS: tuple[NoveltyFact, ...] = (
         gold=("n/5", "Byzantine"),
         paraphrase="Up to what fraction of nodes can be Byzantine for the "
         "Marrow-Quist bound to hold?",
+        false_note="The Marrow-Quist bound holds under fewer than n/3 Byzantine "
+        "faults.",
+        false_gold=("n/3",),
     ),
     NoveltyFact(
         note="Setting vault.seal_threshold above 0.8 in Cindervault triggers "
@@ -81,6 +98,9 @@ NOVELTY_FACTS: tuple[NoveltyFact, ...] = (
         gold=("re-shard", "replicas"),
         paraphrase="In Cindervault, what does raising vault.seal_threshold past 0.8 "
         "do to the secret store?",
+        false_note="Setting vault.seal_threshold above 0.5 in Cindervault triggers "
+        "a full key rotation of the secret store.",
+        false_gold=("0.5", "key rotation"),
     ),
     NoveltyFact(
         note="Zelanocytes are specialized cells in the Tarsk gland that secrete "
@@ -88,6 +108,9 @@ NOVELTY_FACTS: tuple[NoveltyFact, ...] = (
         query="What do zelanocytes secrete, and in which gland are they found?",
         gold=("melanoquin", "Tarsk"),
         paraphrase="Which gland holds the cells that produce melanoquin?",
+        false_note="Zelanocytes are specialized cells in the Phlox gland that "
+        "secrete luminase.",
+        false_gold=("luminase", "Phlox"),
     ),
     NoveltyFact(
         note="Under the GX-9 imaging standard, every frame must embed a 256-bit "
@@ -96,6 +119,9 @@ NOVELTY_FACTS: tuple[NoveltyFact, ...] = (
         gold=("alpha", "least significant", "256"),
         paraphrase="In GX-9, how many bits is the provenance tag and which channel's "
         "least-significant bits hold it?",
+        false_note="Under the GX-9 imaging standard, every frame embeds a 128-bit "
+        "provenance tag in the high bits of the red channel.",
+        false_gold=("128", "red"),
     ),
     NoveltyFact(
         note="The Drelb config key merge.fanout caps how many sibling branches "
@@ -104,6 +130,9 @@ NOVELTY_FACTS: tuple[NoveltyFact, ...] = (
         gold=("6", "fanout"),
         paraphrase="By default, how many sibling branches does Drelb's merge.fanout "
         "fuse per pass?",
+        false_note="The Drelb config key merge.fanout has a default of 12 and a "
+        "maximum of 64.",
+        false_gold=("12",),
     ),
     NoveltyFact(
         note="Quenby's law of cache coherence holds that a write-back cache with "
@@ -114,6 +143,9 @@ NOVELTY_FACTS: tuple[NoveltyFact, ...] = (
         gold=("2", "associativity"),
         paraphrase="Under the Tolan protocol, Quenby's law caps store-buffer depth "
         "at what multiple of associativity?",
+        false_note="Quenby's law holds only when the store buffer depth does not "
+        "exceed 4 times the associativity.",
+        false_gold=("4",),
     ),
 )
 
