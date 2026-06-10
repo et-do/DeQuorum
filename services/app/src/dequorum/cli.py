@@ -439,6 +439,32 @@ def _build_parser() -> argparse.ArgumentParser:
     gov.add_argument("--seed", type=int, default=0)
     gov.add_argument("--output", default="docs/benchmarks/governance.md")
 
+    quant = sub.add_parser(
+        "quant-bench",
+        help="Does quantizing the base model erode grounding lift? Runs C2 across "
+        "quantization levels (the sovereignty cost lever) (no DB)",
+    )
+    quant.add_argument(
+        "--models",
+        nargs="+",
+        default=["qwen2.5-coder:7b-instruct-q4_K_M", "qwen2.5-coder:7b-instruct-q8_0"],
+        help="Ollama tags at different quant levels (pull them first)",
+    )
+    quant.add_argument("--host", default="http://localhost:11434")
+    quant.add_argument("--limit", type=int, default=None, help="First N facts")
+    quant.add_argument("--output", default="docs/benchmarks/quant.md")
+
+    aroute = sub.add_parser(
+        "attribution-route",
+        help="Attribution-by-construction: train per-contributor adapters and route "
+        "queries to them; can cheap routing assign credit faithfully? (no DB)",
+    )
+    aroute.add_argument("--base", default="Qwen/Qwen2.5-0.5B-Instruct")
+    aroute.add_argument("--epochs", type=int, default=4)
+    aroute.add_argument("--seed", type=int, default=0)
+    aroute.add_argument("--limit", type=int, default=None, help="First N contributors")
+    aroute.add_argument("--output", default="docs/benchmarks/attribution_route.md")
+
     cost = sub.add_parser(
         "cost-model", help="Per-query unit economics + break-even (no DB needed)"
     )
@@ -2088,6 +2114,220 @@ def _cmd_governance_sim(args: argparse.Namespace) -> int:
     return 0
 
 
+def _quant_model(tag: str, args: argparse.Namespace):
+    from dequorum.inference.base_model import OllamaBaseModel
+
+    return OllamaBaseModel(
+        model=tag, host=args.host, timeout_seconds=300.0, num_predict=192
+    )
+
+
+def _cmd_quant_bench(args: argparse.Namespace) -> int:
+    """Does quantizing the base model erode the grounding mechanism? Runs the
+    novelty grounding benchmark across quantization levels of the same model.
+
+    Sovereignty means people can self-host the intelligence, and quantization is
+    the main lever that puts a capable model on commodity/edge hardware. This
+    checks the cost lever doesn't silently break the core mechanism: if grounding
+    lift holds from high to low precision, cheap edge inference is safe; if it
+    collapses at low bit-width, there's a precision floor for self-hosting."""
+    from dequorum.benchmark.novelty import NOVELTY_FACTS, run_novelty_benchmark
+
+    facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+
+    rows = []
+    for tag in args.models:
+        print(f"  [{tag}] running grounding benchmark...", flush=True)
+        rep = run_novelty_benchmark(_quant_model(tag, args), facts=facts)  # type: ignore[arg-type]
+        rows.append((tag, rep.mean_base, rep.mean_grounded, rep.lift))
+
+    lifts = [r[3] for r in rows]
+    spread = (max(lifts) - min(lifts)) if lifts else 0.0
+    if not rows:
+        verdict = "**Verdict:** no models ran."
+    elif spread <= 0.1:
+        verdict = (
+            f"**Verdict: robust.** Grounding lift varies by only {spread:.3f} across "
+            "quantization levels — the mechanism survives low-precision inference, so "
+            "cheap edge self-hosting does not break grounding."
+        )
+    else:
+        worst = min(rows, key=lambda r: r[3])
+        verdict = (
+            f"**Verdict: precision-sensitive.** Lift varies by {spread:.3f}; the "
+            f"weakest level (`{worst[0]}`, lift {worst[3]:+.3f}) shows a floor below "
+            "which self-hosting erodes grounding. Pin a minimum bit-width for hosts."
+        )
+    lines = [
+        "# Quantization robustness of grounding",
+        "",
+        f"Invented facts: {len(facts)}. Each model is the same family at a different "
+        "quantization level; we measure base vs grounded gold-fact recall (the C2 "
+        "grounding lift) at each.",
+        "",
+        "| model (quant level) | base recall | grounded recall | grounding lift |",
+        "| --- | ---: | ---: | ---: |",
+    ]
+    for tag, base, grounded, lift in rows:
+        lines.append(f"| `{tag}` | {base:.3f} | {grounded:.3f} | {lift:+.3f} |")
+    lines += ["", verdict, ""]
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines))
+    print(f"Report written: {out}")
+    for tag, base, grounded, lift in rows:
+        print(f"{tag}: base={base:.3f} grounded={grounded:.3f} lift={lift:+.3f}")
+    return 0
+
+
+def _cmd_attribution_route(args: argparse.Namespace) -> int:
+    """Attribution-by-construction: train one LoRA per contributor, then route each
+    query to an adapter with a cheap embedding router.
+
+    Post-hoc attribution (leave-one-out) is expensive and our marginal measure is
+    only weakly faithful. If instead a cheap, deterministic router picks the
+    *owning* contributor's adapter, credit becomes a structural property of
+    inference — cheap to compute, reproducible by anyone, and faithful by
+    construction. This measures routing accuracy (does the router pick the owner?)
+    and whether recall through the routed adapter matches the owning adapter."""
+    import gc
+    import tempfile
+
+    import numpy as np
+    import torch
+    from peft import PeftModel
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    from dequorum.benchmark.novelty import NOVELTY_FACTS
+    from dequorum.distill.poc import (
+        TrainingExample,
+        generate,
+        seed_everything,
+        train_lora,
+    )
+    from dequorum.eval import KeywordRecallJudge
+    from dequorum.routing.embedder import SentenceTransformerEmbedder, cosine_sim
+
+    seed_everything(args.seed)
+    facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+    judge = KeywordRecallJudge()
+    embedder = SentenceTransformerEmbedder()
+
+    def mean(xs: list[float]) -> float:
+        return sum(xs) / len(xs) if xs else 0.0
+
+    # The router's per-contributor signature is the embedding of the note they own.
+    sigs = embedder.embed([f.note for f in facts])
+    routed = []
+    for f in facts:
+        q = embedder.embed([f.query])[0]
+        routed.append(int(np.argmax(cosine_sim(q, sigs))))
+    routing_acc = mean([1.0 if routed[j] == j else 0.0 for j in range(len(facts))])
+
+    # Train one tiny adapter per contributor; keep on disk to bound memory.
+    tmp = tempfile.mkdtemp()
+    for i, f in enumerate(facts):
+        print(f"  training adapter {i + 1}/{len(facts)}...", flush=True)
+        ex = [
+            TrainingExample(
+                prompt=f.query,
+                completion=f.note,
+                contributor_id=f"dq:nov-{i}",
+                contribution_id=f"nov-{i}",
+            )
+        ]
+        m, _ = train_lora(ex, base_id=args.base, epochs=args.epochs)
+        m.save_pretrained(f"{tmp}/a{i}")
+        del m
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    # Load base once + all adapters (adapters are tiny), switch the active one.
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    tok = AutoTokenizer.from_pretrained(args.base)
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
+    base = AutoModelForCausalLM.from_pretrained(args.base, torch_dtype=torch.float32)
+    base.to(device)
+    model = PeftModel.from_pretrained(base, f"{tmp}/a0", adapter_name="a0")
+    for i in range(1, len(facts)):
+        model.load_adapter(f"{tmp}/a{i}", adapter_name=f"a{i}")
+
+    def recall_via(adapter_idx: int, query: str, ref) -> float:
+        model.set_adapter(f"a{adapter_idx}")
+        return judge.score(
+            query=query, answer=generate(model, tok, query), reference=ref
+        )
+
+    base_rec, oracle_rec, routed_rec = [], [], []
+    for j, f in enumerate(facts):
+        model.set_adapter(f"a{j}")
+        with model.disable_adapter():
+            ans = generate(model, tok, f.query)
+        base_rec.append(judge.score(query=f.query, answer=ans, reference=f.gold))
+        oracle_rec.append(recall_via(j, f.query, f.gold))
+        routed_rec.append(recall_via(routed[j], f.query, f.gold))
+
+    m_base, m_oracle, m_routed = mean(base_rec), mean(oracle_rec), mean(routed_rec)
+    routing_cost = m_oracle - m_routed
+    if routing_acc >= 0.75 and routing_cost <= 0.1:
+        verdict = (
+            f"**Verdict: viable.** A cheap embedding router picks the owning "
+            f"contributor {routing_acc:.0%} of the time, and recall through the routed "
+            f"adapter ({m_routed:.3f}) matches the owning adapter ({m_oracle:.3f}). "
+            "Credit can be assigned by routing — cheap, deterministic, and "
+            "reproducible — instead of expensive post-hoc ablation."
+        )
+    else:
+        verdict = (
+            f"**Verdict: not yet.** Routing accuracy {routing_acc:.0%}, routed recall "
+            f"{m_routed:.3f} vs owning {m_oracle:.3f} (cost {routing_cost:+.3f}). "
+            "Attribution-by-routing needs a stronger router and/or more separable "
+            "per-contributor adapters before it can replace post-hoc attribution."
+        )
+    lines = [
+        "# Attribution-by-construction (per-contributor adapter routing)",
+        "",
+        f"Base: `{args.base}` · epochs {args.epochs} · contributors {len(facts)} · "
+        f"router: `{embedder.name}` · seed {args.seed}",
+        "",
+        f"- **routing accuracy (router picks the owner): {routing_acc:.3f}**",
+        f"- mean recall — base: {m_base:.3f} · routed adapter: {m_routed:.3f} · "
+        f"owning adapter (oracle): {m_oracle:.3f}",
+        f"- routing cost (oracle minus routed): {routing_cost:+.3f}",
+        "",
+        verdict,
+        "",
+        "| contributor | routed→ | owner? | base | routed recall | owning recall |",
+        "| ---: | ---: | :---: | ---: | ---: | ---: |",
+    ]
+    for j in range(len(facts)):
+        ok = "✓" if routed[j] == j else f"✗ (a{routed[j]})"
+        lines.append(
+            f"| {j} | a{routed[j]} | {ok} | {base_rec[j]:.2f} | "
+            f"{routed_rec[j]:.2f} | {oracle_rec[j]:.2f} |"
+        )
+    lines += [
+        "",
+        "If routing accuracy is high and routed recall tracks the owning adapter, "
+        "credit is a structural, cheap, reproducible property of inference — the "
+        "strongest path to a faithful, verifiable payout signal. Where the router "
+        "misroutes, credit would go to the wrong contributor, so router quality is "
+        "the thing to harden next.",
+        "",
+    ]
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines))
+    print(f"Report written: {out}")
+    print(
+        f"routing_acc={routing_acc:.3f} base={m_base:.3f} routed={m_routed:.3f} "
+        f"oracle={m_oracle:.3f}"
+    )
+    return 0
+
+
 def _cmd_cost_model(args: argparse.Namespace) -> int:
     """Print per-query unit economics; no database or model required."""
     from dequorum.economics import CostModel
@@ -2176,6 +2416,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_conflict_bench(args)
     if args.cmd == "governance-sim":
         return _cmd_governance_sim(args)
+    if args.cmd == "quant-bench":
+        return _cmd_quant_bench(args)
+    if args.cmd == "attribution-route":
+        return _cmd_attribution_route(args)
     if args.cmd == "cost-model":
         return _cmd_cost_model(args)
     if args.cmd == "novelty-bench":

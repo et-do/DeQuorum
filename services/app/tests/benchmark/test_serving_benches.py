@@ -10,9 +10,17 @@ from __future__ import annotations
 import argparse
 from collections.abc import Iterator
 
+import numpy as np
+
 from dequorum.benchmark.novelty import NOVELTY_FACTS
-from dequorum.cli import _bench_contributions, _cmd_conflict_bench, _cmd_retrieval_bench
+from dequorum.cli import (
+    _bench_contributions,
+    _cmd_conflict_bench,
+    _cmd_quant_bench,
+    _cmd_retrieval_bench,
+)
 from dequorum.retrieval.bm25 import BM25Index
+from dequorum.routing.embedder import HashEmbedder, cosine_sim
 
 
 class _EchoSystemModel:
@@ -74,3 +82,36 @@ def test_conflict_bench_writes_vote_gated_row(tmp_path, monkeypatch) -> None:
     text = out.read_text()
     assert "Conflicting contributions" in text
     assert "vote-gated to true" in text
+
+
+def test_quant_bench_writes_row_per_model(tmp_path, monkeypatch) -> None:
+    import dequorum.cli as cli
+
+    monkeypatch.setattr(cli, "_quant_model", lambda tag, args: _EchoSystemModel())
+    out = tmp_path / "quant.md"
+    rc = _cmd_quant_bench(
+        _ns(models=["m-q4", "m-q8"], host="", limit=3, output=str(out))
+    )
+    assert rc == 0
+    text = out.read_text()
+    assert "Quantization robustness" in text
+    assert "`m-q4`" in text and "`m-q8`" in text
+    assert "Verdict" in text
+
+
+def test_attribution_route_picks_owner_when_signature_matches_query() -> None:
+    """The attribution-by-construction router embeds each contributor's note and
+    routes a query to the nearest. With an exact lexical match it must pick the
+    owner — the property that makes credit-by-routing faithful."""
+    embedder = HashEmbedder(256)
+    notes = [
+        "quic over udp transport for http3",
+        "rust ownership borrow checker memory safety",
+        "python paramspec decorator typing",
+    ]
+    sigs = embedder.embed(notes)
+    # A query that is the owner's note should route to that owner for every row.
+    for owner, note in enumerate(notes):
+        q = embedder.embed([note])[0]
+        routed = int(np.argmax(cosine_sim(q, sigs)))
+        assert routed == owner

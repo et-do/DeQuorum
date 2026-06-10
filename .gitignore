@@ -185,4 +185,17 @@ cython_debug/
 
 .benchmarks/
 .claude/scheduled_tasks.lock
-docs/benchmarks/20260610T022854Z-3-001/
+
+# Colab / Google Drive benchmark dumps. Canonical reports live at
+# docs/benchmarks/<name>.md; the timestamped folders are transient copies.
+docs/benchmarks/drive-download-*/
+docs/benchmarks/*T*Z-*/
+
+# ML training artifacts — LoRA adapters, quantized/full weights, run logs.
+# Produced by the distill / attribution-route experiments; these belong on
+# Drive, not in git.
+*.safetensors
+*.gguf
+**/lora-*/
+**/checkpoint-*/
+wandb/
