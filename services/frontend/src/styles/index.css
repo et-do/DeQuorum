@@ -133,6 +133,23 @@ body {
 	animation-delay: 160ms;
 }
 
+/* Assistant avatar: a tiny network mesh that rotates very slowly so it reads as
+ * "alive" without pulling attention. Frozen entirely under reduced-motion. */
+@keyframes network-avatar-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+.network-avatar-spin {
+	transform-origin: 50% 50%;
+	animation: network-avatar-spin 30s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+	.network-avatar-spin {
+		animation: none;
+	}
+}
+
 /* Markdown rendering inside chat bubbles. Mirrors a stripped-down
  * version of prose-class spacing but keyed off our design tokens so
  * dark/light themes stay consistent. */

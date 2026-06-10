@@ -179,7 +179,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 									onClick={toggleCollapsed}
 									aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
 									title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-									className="flex h-7 w-7 items-center justify-center rounded-md text-xs text-fg-subtle transition-colors hover:bg-bg-muted hover:text-fg"
+									className="flex h-8 w-8 items-center justify-center rounded-md text-xs text-fg-subtle transition-colors hover:bg-bg-muted hover:text-fg"
 								>
 									{collapsed ? "›" : "‹"}
 								</button>

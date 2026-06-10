@@ -173,7 +173,7 @@ function Message({ message, userSeed }: { message: ChatMessage; userSeed: string
 function UserBubble({ text, seed }: { text: string; seed: string }) {
 	return (
 		<div className="mx-auto flex max-w-3xl flex-row-reverse items-start gap-3">
-			<Avatar seed={seed} size={32} />
+			<Avatar seed={seed} size={28} />
 			<div
 				data-enter
 				className="max-w-2xl whitespace-pre-wrap rounded-2xl bg-bg-elevated px-4 py-2.5 text-sm leading-relaxed"
@@ -196,10 +196,47 @@ function NetworkBubble({ content }: { content: string }) {
 	);
 }
 
+// Outer-ring node coordinates for the avatar mesh: 6 points evenly around the
+// center of a 32×32 viewBox at radius 10.
+const AVATAR_NODES = [
+	[26, 16],
+	[21, 24.66],
+	[11, 24.66],
+	[6, 16],
+	[11, 7.34],
+	[21, 7.34],
+] as const;
+
 function NetworkAvatar() {
+	// A small DeQuorum mesh that rotates very slowly (see `.network-avatar-spin`
+	// in styles/index.css; frozen under prefers-reduced-motion). Plain SVG so it
+	// renders once per message with no canvas/rAF loop per bubble.
 	return (
-		<div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-bg-elevated text-[10px] font-bold tracking-widest text-fg-muted">
-			DQ
+		<div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-bg-elevated">
+			<svg
+				viewBox="0 0 32 32"
+				className="network-avatar-spin h-5 w-5 text-fg-muted"
+				role="img"
+				aria-label="DeQuorum"
+			>
+				<g stroke="currentColor" strokeWidth="0.5" opacity="0.45">
+					{AVATAR_NODES.map(([x, y], i) => {
+						const [nx, ny] = AVATAR_NODES[(i + 1) % AVATAR_NODES.length];
+						return (
+							<g key={i}>
+								<line x1="16" y1="16" x2={x} y2={y} />
+								<line x1={x} y1={y} x2={nx} y2={ny} />
+							</g>
+						);
+					})}
+				</g>
+				<g fill="currentColor">
+					<circle cx="16" cy="16" r="2" />
+					{AVATAR_NODES.map(([x, y], i) => (
+						<circle key={i} cx={x} cy={y} r="1.5" />
+					))}
+				</g>
+			</svg>
 		</div>
 	);
 }

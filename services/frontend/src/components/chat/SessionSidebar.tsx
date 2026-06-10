@@ -113,16 +113,28 @@ export function SessionSidebar({
 							</ul>
 						)}
 					</div>
-					<div className={cn("flex px-2 pb-2", collapsed ? "justify-center" : "justify-end")}>
-						<button
-							type="button"
-							onClick={toggleCollapsed}
-							aria-label={collapsed ? "Expand sessions" : "Collapse sessions"}
-							title={collapsed ? "Expand sessions" : "Collapse sessions"}
-							className="flex h-7 w-7 items-center justify-center rounded-md text-xs text-fg-subtle transition-colors hover:bg-bg-muted hover:text-fg"
+					{/* Footer box mirrors AppShell's exactly: px-2 pb-2 wrapper around a
+					    px-3 py-2 row, with an h-8 button. AppShell's collapse button
+					    centers in a 32px row set by the h-8 ThemeToggle; making this
+					    button h-8 too gives an identical 32px content row, so both
+					    collapse buttons share the same vertical center. */}
+					<div className="px-2 pb-2">
+						<div
+							className={cn(
+								"flex items-center px-3 py-2",
+								collapsed ? "justify-center" : "justify-end",
+							)}
 						>
-							{collapsed ? "›" : "‹"}
-						</button>
+							<button
+								type="button"
+								onClick={toggleCollapsed}
+								aria-label={collapsed ? "Expand sessions" : "Collapse sessions"}
+								title={collapsed ? "Expand sessions" : "Collapse sessions"}
+								className="flex h-8 w-8 items-center justify-center rounded-md text-xs text-fg-subtle transition-colors hover:bg-bg-muted hover:text-fg"
+							>
+								{collapsed ? "›" : "‹"}
+							</button>
+						</div>
 					</div>
 				</>
 			)}
