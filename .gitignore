@@ -185,3 +185,4 @@ cython_debug/
 
 .benchmarks/
 .claude/scheduled_tasks.lock
+docs/benchmarks/20260610T022854Z-3-001/
