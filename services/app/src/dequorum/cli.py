@@ -462,7 +462,14 @@ def _build_parser() -> argparse.ArgumentParser:
     aroute.add_argument("--base", default="Qwen/Qwen2.5-0.5B-Instruct")
     aroute.add_argument("--epochs", type=int, default=4)
     aroute.add_argument("--seed", type=int, default=0)
-    aroute.add_argument("--limit", type=int, default=None, help="First N contributors")
+    aroute.add_argument(
+        "--facts-per-contributor",
+        type=int,
+        default=1,
+        help="Group facts so each adapter trains on N facts (>1 enriches adapters "
+        "so routed quality, not just routed attribution, becomes measurable)",
+    )
+    aroute.add_argument("--limit", type=int, default=None, help="First N facts")
     aroute.add_argument("--output", default="docs/benchmarks/attribution_route.md")
 
     cost = sub.add_parser(
@@ -2207,6 +2214,7 @@ def _cmd_attribution_route(args: argparse.Namespace) -> int:
     construction. This measures routing accuracy (does the router pick the owner?)
     and whether recall through the routed adapter matches the owning adapter."""
     import gc
+    import math
     import tempfile
 
     import numpy as np
@@ -2226,34 +2234,50 @@ def _cmd_attribution_route(args: argparse.Namespace) -> int:
 
     seed_everything(args.seed)
     facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+    fpc = max(1, getattr(args, "facts_per_contributor", 1))
+    n_contrib = math.ceil(len(facts) / fpc)
+    owner_of = [j // fpc for j in range(len(facts))]  # contributor that owns fact j
+    facts_of = {
+        c: [j for j in range(len(facts)) if owner_of[j] == c] for c in range(n_contrib)
+    }
     judge = KeywordRecallJudge()
     embedder = SentenceTransformerEmbedder()
 
     def mean(xs: list[float]) -> float:
         return sum(xs) / len(xs) if xs else 0.0
 
-    # The router's per-contributor signature is the embedding of the note they own.
-    sigs = embedder.embed([f.note for f in facts])
+    # Router signature per contributor = centroid of the embeddings of the notes
+    # they own (a single note when facts_per_contributor == 1).
+    note_vecs = embedder.embed([f.note for f in facts])
+    sigs = np.stack([note_vecs[facts_of[c]].mean(axis=0) for c in range(n_contrib)])
     routed = []
     for f in facts:
         q = embedder.embed([f.query])[0]
         routed.append(int(np.argmax(cosine_sim(q, sigs))))
-    routing_acc = mean([1.0 if routed[j] == j else 0.0 for j in range(len(facts))])
+    routing_acc = mean(
+        [1.0 if routed[j] == owner_of[j] else 0.0 for j in range(len(facts))]
+    )
 
-    # Train one tiny adapter per contributor; keep on disk to bound memory.
+    # Train one adapter per contributor on ALL of that contributor's facts; keep on
+    # disk to bound memory. More facts per contributor = a richer adapter, which is
+    # what lets routed *quality* (not just routed attribution) rise.
     tmp = tempfile.mkdtemp()
-    for i, f in enumerate(facts):
-        print(f"  training adapter {i + 1}/{len(facts)}...", flush=True)
+    for c in range(n_contrib):
+        print(
+            f"  training adapter {c + 1}/{n_contrib} ({len(facts_of[c])} fact(s))...",
+            flush=True,
+        )
         ex = [
             TrainingExample(
-                prompt=f.query,
-                completion=f.note,
-                contributor_id=f"dq:nov-{i}",
-                contribution_id=f"nov-{i}",
+                prompt=facts[j].query,
+                completion=facts[j].note,
+                contributor_id=f"dq:c{c}",
+                contribution_id=f"nov-{j}",
             )
+            for j in facts_of[c]
         ]
         m, _ = train_lora(ex, base_id=args.base, epochs=args.epochs)
-        m.save_pretrained(f"{tmp}/a{i}")
+        m.save_pretrained(f"{tmp}/a{c}")
         del m
         gc.collect()
         if torch.cuda.is_available():
@@ -2267,22 +2291,22 @@ def _cmd_attribution_route(args: argparse.Namespace) -> int:
     base = AutoModelForCausalLM.from_pretrained(args.base, torch_dtype=torch.float32)
     base.to(device)
     model = PeftModel.from_pretrained(base, f"{tmp}/a0", adapter_name="a0")
-    for i in range(1, len(facts)):
-        model.load_adapter(f"{tmp}/a{i}", adapter_name=f"a{i}")
+    for c in range(1, n_contrib):
+        model.load_adapter(f"{tmp}/a{c}", adapter_name=f"a{c}")
 
-    def recall_via(adapter_idx: int, query: str, ref) -> float:
-        model.set_adapter(f"a{adapter_idx}")
+    def recall_via(contributor: int, query: str, ref) -> float:
+        model.set_adapter(f"a{contributor}")
         return judge.score(
             query=query, answer=generate(model, tok, query), reference=ref
         )
 
     base_rec, oracle_rec, routed_rec = [], [], []
     for j, f in enumerate(facts):
-        model.set_adapter(f"a{j}")
+        model.set_adapter(f"a{owner_of[j]}")
         with model.disable_adapter():
             ans = generate(model, tok, f.query)
         base_rec.append(judge.score(query=f.query, answer=ans, reference=f.gold))
-        oracle_rec.append(recall_via(j, f.query, f.gold))
+        oracle_rec.append(recall_via(owner_of[j], f.query, f.gold))
         routed_rec.append(recall_via(routed[j], f.query, f.gold))
 
     m_base, m_oracle, m_routed = mean(base_rec), mean(oracle_rec), mean(routed_rec)
@@ -2305,7 +2329,8 @@ def _cmd_attribution_route(args: argparse.Namespace) -> int:
     lines = [
         "# Attribution-by-construction (per-contributor adapter routing)",
         "",
-        f"Base: `{args.base}` · epochs {args.epochs} · contributors {len(facts)} · "
+        f"Base: `{args.base}` · epochs {args.epochs} · contributors {n_contrib} · "
+        f"facts {len(facts)} · facts/contributor {fpc} · "
         f"router: `{embedder.name}` · seed {args.seed}",
         "",
         f"- **routing accuracy (router picks the owner): {routing_acc:.3f}**",
@@ -2315,13 +2340,13 @@ def _cmd_attribution_route(args: argparse.Namespace) -> int:
         "",
         verdict,
         "",
-        "| contributor | routed→ | owner? | base | routed recall | owning recall |",
-        "| ---: | ---: | :---: | ---: | ---: | ---: |",
+        "| fact | owner | routed→ | ok? | base | routed recall | owning recall |",
+        "| ---: | ---: | ---: | :---: | ---: | ---: | ---: |",
     ]
     for j in range(len(facts)):
-        ok = "✓" if routed[j] == j else f"✗ (a{routed[j]})"
+        ok = "✓" if routed[j] == owner_of[j] else f"✗ (c{routed[j]})"
         lines.append(
-            f"| {j} | a{routed[j]} | {ok} | {base_rec[j]:.2f} | "
+            f"| {j} | c{owner_of[j]} | c{routed[j]} | {ok} | {base_rec[j]:.2f} | "
             f"{routed_rec[j]:.2f} | {oracle_rec[j]:.2f} |"
         )
     lines += [

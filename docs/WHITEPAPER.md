@@ -139,7 +139,7 @@ $$
 
 with $k = 60$ a smoothing constant and $r_*(d)$ the rank of $d$ under each scorer. The top-50 by $s_{\text{fused}}$ then pass through a cross-encoder reranker $g(q, d) \in \mathbb{R}$ that reads $(q, d)$ jointly, producing the final top-$K$ retrieval set $R_K(q)$.
 
-An authority filter applies governance: $R_K(q)$ is restricted to contributions with `status = LIVE`, `version = current`, $\text{tally}(d) \geq \tau_T$, and $\text{tier}(\text{author}(d)) \geq \tau_A$. The augmented prompt sent to the base model is then
+An authority filter applies governance: $R_K(q)$ is restricted to contributions with `status = LIVE`, `version = current`, $\text{tally}(d) \geq \tau_T$, and $\text{tier}(\text{author}(d)) \geq \tau_A$. The `version = current` restriction is load-bearing, not cosmetic: §8.8 shows that surfacing competing versions of a claim side by side lets the model adopt a falsehood, while gating to the single governance-promoted version drives that to zero. The augmented prompt sent to the base model is then
 
 $$
 \text{prompt}(q) = \text{persona}(\hat{c}) \;\|\; \text{format}\bigl(R_K(q)\bigr) \;\|\; q
@@ -235,6 +235,8 @@ A static one-vote-one-account model is sybil-vulnerable. DeQuorum solves this wi
 | 4 | Curator | elected by the community | 1.0, but *veto power* in triage | 10,000/day |
 
 The asymmetry is intentional. **Curators wield veto in triage but have *less* weight in the community vote.** The function of a curator is to keep the queue *moving* — to reject obvious noise, request edits, unblock discussion. The function of the community vote is to keep the network *correct*. Conflating those roles into a single weighting collapses the system into oligarchy or into noise.
+
+The tier weighting is the system's sybil defense, and §8.8 quantifies why it matters: a flat one-account-one-vote tally is breached once an attacker fields sybils numbering ~0.35× the honest electorate, whereas weighting by earned reputation — the effect the ladder encodes, since new accounts at tiers 0–1 carry zero weight — raises that break-in point ~9×. Because an approved-but-false contribution will be repeated by the model (§8.8), this margin directly bounds how much falsehood can ever reach the grounding corpus.
 
 ### 4.2 Every signature, recorded forever
 
@@ -337,7 +339,7 @@ The closest comparable in spirit is Wikipedia, but Wikipedia famously has no eco
 
 ## 8. Experimental validation
 
-The architectural claims of §3 are testable, and this section reports the results, organized as experimental design, results per claim, and limitations. Every experiment is reproducible from the reference implementation; the exact commands and full per-item records are in [docs/benchmarks/](benchmarks/), and the construction-level properties are encoded as deterministic tests. Results are reported at the scale the present seed corpus and inference budget allow; sample sizes are stated throughout and their consequences discussed in §8.8.
+The architectural claims of §3 are testable, and this section reports the results, organized as experimental design, results per claim, and limitations. Every experiment is reproducible from the reference implementation; the exact commands and full per-item records are in [docs/benchmarks/](benchmarks/), and the construction-level properties are encoded as deterministic tests. Results are reported at the scale the present seed corpus and inference budget allow; sample sizes are stated throughout and their consequences discussed in §8.9.
 
 ### 8.1 Experimental design
 
@@ -359,19 +361,17 @@ Two benchmark surfaces are reported, because the cost profile is very different:
 
 Full-pipeline benchmark uses the 15 hand-curated questions (5 per `seeded` / `unseeded` / `out_of_domain` bucket).
 
-**Conditions** (full-pipeline only; routing-only collapses to one):
-
-- **A. Vanilla.** Bare base model, generic system prompt. No DeQuorum at all.
-- **B. DeQuorum full.** Route → retrieve → augmented category prompt → signed proof chain.
-- **C. DeQuorum no-retrieval.** Router + category persona only; retrieval is skipped. This isolates the contribution of the *retrieval* layer (B vs C) from the contribution of the *routing/persona* layer (C vs A).
-
-**Conditions** (each question is run three ways for an apples-to-apples comparison):
+**Conditions** (full-pipeline only; routing-only collapses to one). Each question is run three ways for an apples-to-apples comparison:
 
 - **A. Vanilla.** Bare base model, generic system prompt. No DeQuorum at all.
 - **B. DeQuorum full.** Route → retrieve → augmented category prompt → signed proof chain.
 - **C. DeQuorum no-retrieval.** Router + category persona only; retrieval is skipped. This isolates the contribution of the *retrieval* layer (B vs C) from the contribution of the *routing/persona* layer (C vs A).
 
 **Setup.** Base model: Qwen 2.5 Coder 7B (Apache-2.0) via Ollama. Router: embedding-based with acceptance threshold $\tau_R = 0.30$, selected by the sweep in §8.2.1. Composition: pick-best. Seed corpus: 25 peer-approved contributions across five routable categories (python-typing, python-async, python-packaging, rust-ownership, http-protocol). Each result row links to the corresponding question record in the benchmark reports.
+
+**A third surface: the feasibility and safety suite.** Several claims below concern mechanisms the two surfaces above cannot isolate — grounding on knowledge the base lacks (§8.3), propagation of a false contribution (§8.8), conflict between contradictory contributions (§8.8), sybil resistance of the vote (§8.8), and the survival of attribution through distillation (§8.7). These run as self-contained benchmarks with no database and no production corpus, on a single GPU, so each isolates one mechanism without the confounds of corpus scale or retrieval tuning. They use an eight-fact *invented* corpus — specific, plausible, but fictional, so no pretrained model can have memorized it — and, where training is involved, low-rank adapters over open base models (Qwen 2.5 0.5B, and the open-data OLMo-2 1B). Commands and full records are in [docs/benchmarks/](benchmarks/).
+
+**The grader is validated before it is used.** Every quality number in this section is only as trustworthy as the grader that produced it, so both graders are tested directly: each scores a known-correct answer and a plausible-but-false variant of every invented fact against the true gold. The keyword grader separates correct from plausibly-wrong by $+0.71$ (pairwise accuracy $0.94$) and the LLM grader by $+0.73$ (pairwise accuracy $1.00$); a grader unable to tell the two apart would make every downstream number suspect, and neither is. The LLM grader is the less brittle of the two and is preferred wherever the distinction is subtle. Full record in [docs/benchmarks/judge.md](benchmarks/judge.md).
 
 ### 8.2 Claim 1 — Routing collapses the search space without missing the right domain
 
@@ -405,7 +405,7 @@ The eight leaks at $\tau_R = 0.18$ are misroutings in which MMLU questions such 
 
 #### 8.2.2 Search-space reduction
 
-At $|\mathcal{C}| = 5$ routable categories in this configuration, routing collapses retrieval to one-fifth of the corpus per accepted query — an empirical $5\times$ reduction. The architecture predicts that this factor grows with taxonomy size; confirming the growth requires a larger set of routable categories than the present corpus provides (§8.9).
+At $|\mathcal{C}| = 5$ routable categories in this configuration, routing collapses retrieval to one-fifth of the corpus per accepted query — an empirical $5\times$ reduction. The architecture predicts that this factor grows with taxonomy size; confirming the growth requires a larger set of routable categories than the present corpus provides (§8.10).
 
 ### 8.3 Claim 2 — Contributor-sourced grounding produces measurably different answers
 
@@ -442,6 +442,16 @@ The decisive difference between these conditions is structural rather than in co
 
 Grounding lifts recall from 0.23 to 0.92 — a **+0.69** gain. The residual 0.23 in the base condition is the coarse keyword judge crediting generic tokens the model guesses (e.g. "Byzantine", "associativity"); on the purely invented terms (*melanoquin*, the Cindervault re-sharding rule) the base scores zero. The contrast with the seeded result is the finding for Claim 2: grounding produces a large, measurable gain precisely where the base model is ignorant, and little where it is not. A production network's value therefore depends on sourcing contributions *outside* the base model's training distribution — recent, niche, proprietary, or otherwise unmemorized knowledge — which is also where the contributor commons has its natural advantage.
 
+**The production read path: grounding through retrieval, not an oracle.** The $+0.69$ figure is an *oracle* result — the model is handed the exact correct note. Production never does that: it retrieves from a corpus of many contributions and grounds on the top-$k$. The gap between the two is the loss the serving path introduces, and it is not small. Repeating the invented-fact experiment through the real BM25 retriever over a corpus seeded with a plausible *false* variant of every fact (full record in [docs/benchmarks/retrieval.md](benchmarks/retrieval.md)):
+
+| Read path | True-note hit@k | Grounded recall | False-claim adoption |
+| --- | ---: | ---: | ---: |
+| Oracle (exact note) | — | 0.92 | — |
+| Retrieval, top-1 | 0.50 | 0.56 | 0.44 |
+| Retrieval, top-3 / top-5 | 1.00 | 0.62 | **0.75** |
+
+Two findings, both consequential. First, retrieved-grounded recall (0.62) sits roughly a third below the oracle (0.92): BM25 recovers the true note but does not rank it cleanly above its lexically-similar false twin, so the answer is grounded on a noisier context. Second, and more important, the false twin is co-retrieved on essentially every query at $k \geq 3$, and the model then states the false claim **75%** of the time. Counter-intuitively, retrieving *more* is *less* safe here: at top-1 the model sometimes sees only the true note (false adoption 0.44), whereas at top-3 both are always present (0.75). The implication is sharp — the grounding benefit of Claim 2 is real but the serving path, not the model, decides whether a retrieved falsehood reaches the answer. That hand-off is the subject of Claim 7 (§8.8).
+
 ### 8.4 Claim 3 — Refusal over hallucination on out-of-domain questions
 
 The honesty-about-limits claim says the system should refuse when no category is qualified, rather than emitting plausible-sounding output from the base model.
@@ -466,7 +476,7 @@ Accountability (§1, §4.2) requires that attribution be checkable rather than a
 
 These guarantees are exposed to consumers directly. The endpoint `GET /v1/contributions/{id}/verify` is unauthenticated and returns the integrity and signature-validity verdicts together with the public key and signature, so any third party can reproduce the check without trusting the operator — the distinction between a record that is merely *signed* and one that is *verifiable*.
 
-The guarantee is bounded by key custody. Because contributor keys are at present derived server-side from the authenticated identity (§4.2), the scheme establishes integrity and public verifiability but not resistance to forgery by the operator itself. Non-custodial signing with client-held keys is required to close that gap and is carried as a limitation in §8.8.
+The guarantee is bounded by key custody. Because contributor keys are at present derived server-side from the authenticated identity (§4.2), the scheme establishes integrity and public verifiability but not resistance to forgery by the operator itself. Non-custodial signing with client-held keys is required to close that gap and is carried as a limitation in §8.9.
 
 ### 8.6 Claim 5 — Credit resists manipulation, but a faithful value measure is unresolved
 
@@ -476,7 +486,7 @@ The economic design (§5) depends on a quantity the per-citation ledger does not
 
 On the full gold-annotated set (20 queries, 57 contribution–answer pairs, Qwen 2.5 Coder 7B), retrieval score is at best weakly related to marginal value (Spearman $\rho = 0.19$) and flat per-citation credit is constant by construction. Neither is admissible as a payout proxy; a causal measure is required.
 
-**Faithfulness — weak and judge-sensitive.** The harder question is whether the embedding-based marginal reflects genuine answer quality, evaluated against an independent judge and a corresponding judge-based marginal. The answer depends on the judge. Under gold-fact recall — a coarse, keyword-overlap grader — the embedding marginal is essentially uncorrelated with the judge marginal (Spearman $\rho \approx 0.04$ at the full 57-pair scale). Under an LLM-as-judge, a less brittle grader, the correlation rises to $\rho \approx 0.15$ — still weak, but clearly above retrieval score ($0.09$) and flat credit ($0$ by construction). Two things follow. First, part of the apparent near-zero was judge coarseness, not the measure: a better grader recovers a positive signal. Second, even the better grader leaves the embedding marginal only *weakly* correlated with quality — the right direction, but far short of what setting real payouts would require. Faithfulness is therefore **unestablished**: the measure ranks contributions within an answer and resists manipulation, but its link to answer quality is weak and sensitive to how quality is measured. A stronger judge (held-out human references) and a larger sample are needed to determine whether the signal strengthens; until then, a faithful value estimator is the open problem for the economic layer (§8.8).
+**Faithfulness — weak and judge-sensitive.** The harder question is whether the embedding-based marginal reflects genuine answer quality, evaluated against an independent judge and a corresponding judge-based marginal. The answer depends on the judge. Under gold-fact recall — a coarse, keyword-overlap grader — the embedding marginal is essentially uncorrelated with the judge marginal (Spearman $\rho \approx 0.04$ at the full 57-pair scale). Under an LLM-as-judge, a less brittle grader, the correlation rises to $\rho \approx 0.15$ — still weak, but clearly above retrieval score ($0.09$) and flat credit ($0$ by construction). Two things follow. First, part of the apparent near-zero was judge coarseness, not the measure: a better grader recovers a positive signal. Second, even the better grader leaves the embedding marginal only *weakly* correlated with quality — the right direction, but far short of what setting real payouts would require. Faithfulness is therefore **unestablished**: the measure ranks contributions within an answer and resists manipulation, but its link to answer quality is weak and sensitive to how quality is measured. A stronger judge (held-out human references) and a larger sample are needed to determine whether the signal strengthens; until then, a faithful value estimator is the open problem for the economic layer (§8.9).
 
 **Manipulation resistance.** Marginal credit is robust to the standard attacks, each holding by construction:
 
@@ -487,6 +497,15 @@ On the full gold-annotated set (20 queries, 57 contribution–answer pairs, Qwen
 Each property is encoded as a deterministic test in the reference implementation.
 
 **Redundancy.** Leave-one-out under-credits content that is valuable but redundant with a sibling contribution, since either alone appears removable. We address this with a Shapley-value estimator (`attribution.shapley_attribution`, computed exactly for small cited sets), which distributes credit across redundant contributions in proportion to their marginal coalition value while preserving the manipulation-resistance above.
+
+**A structural alternative: attribution by construction.** The measures above are *post-hoc* — they re-run inference with a contribution removed and read the difference, which is expensive and, as shown, only weakly faithful. A different design makes credit a *property of inference itself*: train one low-rank adapter per contributor, then route each query to an adapter rather than measuring after the fact. If the router picks the *owning* contributor, the routing decision *is* the attribution — cheap, deterministic, and reproducible by anyone with the public router and the contribution text. We test the routing half directly: eight per-contributor adapters, queries routed by embedding similarity between the query and each contributor's note (full record in [docs/benchmarks/attribution_route.md](benchmarks/attribution_route.md)).
+
+| Base | Routing accuracy (picks the owner) | Routed recall | Owning-adapter recall |
+| --- | ---: | ---: | ---: |
+| Qwen 2.5 0.5B | **1.00** | 0.17 | 0.17 |
+| OLMo-2 1B | **1.00** | 0.23 | 0.23 |
+
+Routing accuracy is perfect at both model sizes, and the routed adapter's recall equals the owning adapter's exactly (routing cost $0.00$): the router never sends a query to a worse adapter. This is the strongest evidence yet for a *faithful, verifiable* credit signal — the central open problem of this section — because it sidesteps the resemblance proxy entirely. Two caveats keep the result honest. The routed *recall* is low (0.17–0.23) only because each adapter here trains on a single example (one contributor = one fact); the same OLMo-1B reaches owning-recall 1.00 when one adapter trains on the full corpus (§8.7), so the ceiling is the training recipe, not the mechanism — richer per-contributor data is the obvious next step (§8.10). And the perfect routing is measured over eight *well-separated* topics; routing among near-duplicate or overlapping contributions in a single category is the regime that will stress it, and is untested.
 
 **Relation to prior work.** Data valuation — data-Shapley and influence functions — is well developed for model *training*. Faithful, manipulation-resistant attribution for retrieval-grounded *generation*, where a signed proof chain makes the credited set explicit, is to our knowledge unaddressed. The measure is also the system's payout function, so the research question and the contributor's incentive are one and the same.
 
@@ -500,9 +519,59 @@ The architecture's long-horizon claim (§3.5) is that the contribution corpus is
 
 The base model does not produce the fact; training on the corpus installs it; withholding a single contributor's examples removes it again. The fact is therefore entirely attributable to that contributor under a leave-one-contributor-out test — the training-time counterpart of the inference-time attribution of Claim 5. We are not aware of a prior system that both distils community contributions into a model and traces a distilled fact back to its author.
 
-**Limitations.** The result establishes attribution, not quality. Aggregate gold-fact recall across the five seeded queries did not improve under distillation ($0.367 \to 0.300$); at fourteen training examples on a 0.5-billion-parameter model this is expected, and far below the ~$10^4$-contribution regime the architecture anticipates (§3.5). The mechanism and the attribution property are demonstrated; no quality improvement is claimed at this scale.
+**Attribution across the whole corpus, and what it costs.** The single-fact result generalizes to a per-contributor sweep over all eight invented facts, repeated across seeds, on two open base models. Four quantities matter for the architecture (full records in [docs/benchmarks/distill_attribution.md](benchmarks/distill_attribution.md) and `distill_attribution_olmo.md`):
 
-### 8.8 Limits of the current evaluation
+| | Qwen 2.5 0.5B (3 seeds) | OLMo-2 1B |
+| --- | ---: | ---: |
+| Knowledge gain (mean recall lift) | +0.26 | +0.75 |
+| Attributable fraction (per-contributor) | 0.27 | 0.88 |
+| **Entanglement** (disturbance to *other* facts, ≈0 ideal) | 0.20 | 0.15 |
+| **Forgetting tax** (Δ on base-known control) | +0.04 | −0.20 |
+
+The larger model learns far more (gain +0.75) and attributes far more cleanly (0.88 of each fact traceable to its owner), which is the encouraging direction. But two costs that bear directly on "certifiable ownership" are non-zero and must be reported: **entanglement** stays around 0.15–0.20 — removing one contributor measurably disturbs others, so attribution is clean but not yet *clean enough* to certify single ownership — and the 1B model pays a **−0.20 forgetting tax**, degrading knowledge it already had. Owning the corpus is not free.
+
+**Real learning or memorization?** A held-out paraphrase of each query — never trained on — separates the two: if recall holds on the paraphrase, the model learned the fact; if it collapses, it memorized the prompt. The two models fall on opposite sides. The 0.5B adapter generalizes (paraphrase recall 96% of trained-query recall), but the 1B adapter does *not* (paraphrase recall only 29% of trained-query recall) — it memorized the training phrasings. Capacity bought attribution *and* memorization. This is reported as the genuine, two-edged finding it is, not smoothed over: distillation at this scale installs and attributes facts, but whether it installs robust *knowledge* is model- and recipe-dependent.
+
+**Composition does not yet hold.** Training two domain adapters and composing them at inference (the mechanism §3.1 anticipates for cross-domain questions) did not, at 0.5B, produce a model that recalls both sets while remaining ablatable per-adapter: ablating one adapter left the other's recall unchanged (full record in [docs/benchmarks/distill_compose.md](benchmarks/distill_compose.md)). Compositional per-adapter attribution is therefore recorded as *inconclusive at this scale*, not proven — a larger base and more examples per adapter are needed.
+
+**Limitations.** The results establish attribution and quantify its costs, not a robust quality gain. Aggregate gold-fact recall across the five seeded queries did not improve under distillation of the seed corpus ($0.367 \to 0.300$); at this many training examples on sub-billion-parameter models this is expected, and far below the ~$10^4$-contribution regime the architecture anticipates (§3.5). The mechanism, the attribution property, the entanglement and forgetting costs, and the memorization caveat are demonstrated; a robust quality improvement at scale is not yet claimed.
+
+### 8.8 Claim 7 — Correctness is a governance property, and it is testable
+
+Claim 2 and its retrieval-path corollary establish that grounding faithfully repeats whatever contribution reaches the context — including a false one. This is the system's central safety boundary, stated bluntly: **the model provides no defense against false content.** Correctness is therefore not a property of the model but of the governance layer that decides which contributions ground answers. This section measures both halves — how completely the model adopts a falsehood, and whether governance can hold the line.
+
+**The model adopts whatever it is grounded on.** Grounding each invented fact on a plausible-but-false variant, and measuring whether the answer states the false claim (full record in [docs/benchmarks/falsehood.md](benchmarks/falsehood.md)):
+
+| Condition | False-claim recall |
+| --- | ---: |
+| Base model (control) | 0.19 |
+| Grounded on the false variant | **0.88** |
+
+The base model rarely volunteers the falsehood (0.19); grounded on it, the model repeats it 88% of the time. Grounding is faithful to the contribution, not to the truth — the same property that makes the knowledge layer powerful is what makes governance load-bearing.
+
+**Conflict, and the fix.** Production retrieval surfaces multiple contributions, so before governance resolves a dispute the model can see a true and a false contribution about the same fact at once. Grounding on both (in both orderings), then on the governance-promoted version alone (full record in [docs/benchmarks/conflict.md](benchmarks/conflict.md)):
+
+| Condition | True-claim recall | False-claim recall |
+| --- | ---: | ---: |
+| Both present (avg of orderings) | 0.88 | 0.62 |
+| — true listed first | 0.88 | 0.75 |
+| — false listed first | 0.88 | 0.50 |
+| **Vote-gated to the upvoted version** | **0.92** | **0.00** |
+
+With both present the model cannot arbitrate: it adopts the false claim 62% of the time, and the rate swings 0.25 on ordering alone — it follows presentation, not truth. Gating retrieval to the governance-promoted version eliminates false adoption entirely ($0.62 \to 0.00$) while raising true recall to 0.92. This is an architectural requirement, not an optimization: **retrieval must surface only the current, highest-voted version of a claim, never competing versions side by side.**
+
+**Can governance hold the line under attack?** Vote-gating only works if the vote itself resists capture. Since approving a false contribution is what lets it ground answers, the safety metric is the false-approval rate under a sybil attack — an adversary creating fake accounts to upvote falsehoods and downvote truths. We simulate the live aggregation (net-tally threshold) against a truth-correlated honest electorate, comparing one-account-one-vote with reputation-weighted voting where freshly-created accounts carry little weight (full record in [docs/benchmarks/governance.md](benchmarks/governance.md)):
+
+| Aggregation rule | First false contribution approved at |
+| --- | ---: |
+| Flat (one account, one vote — shipping today) | **0.35×** the honest electorate in sybils |
+| Reputation-weighted | **3.20×** |
+
+Flat voting is linear in accounts, which are nearly free to create, so it breaks once the attacker fields about a third as many sybils as there are honest voters. Weighting votes by earned reputation raises the break-in point by roughly the inverse of a sybil's weight — here ~$9\times$. This is the quantitative case for the tier-weighted voting of §4.1 over raw head-count, and it bounds how much false content can ever reach the grounding corpus. The simulation models a single worst-case lockstep adversary; collusion among already-reputable accounts and adaptive strategies are not captured and remain open (§8.10).
+
+**Taken together**, Claim 7 is the safety story. The model has no built-in defense against falsehood (0.88 adoption), but the two governance mechanisms convert that into a defended system: vote-gated retrieval drives false adoption to 0.00, and reputation-weighted voting raises the attacker's cost ~$9\times$. Correctness is something the network *does*, not something the model *has* — and both mechanisms are testable and, at this scale, hold.
+
+### 8.9 Limits of the current evaluation
 
 The results above are preliminary, and the following limitations bound their interpretation:
 
@@ -511,22 +580,29 @@ The results above are preliminary, and the following limitations bound their int
 - **Automated judging is coarse.** The condition comparison in §8.3 is scored by gold-fact recall, with an LLM-as-judge available as an alternative. Gold-fact recall is a blunt measure and LLM judging carries known biases; held-out, human-written reference answers remain the appropriate standard.
 - **The attribution value measure is only weakly faithful, and judge-sensitive.** At the full 57-pair scale the embedding marginal correlates with judged quality at ρ ≈ 0.04 under a coarse gold-recall judge and ρ ≈ 0.15 under an LLM judge (§8.6) — a real but weak signal, not yet strong enough to set payouts. A faithful estimator (better judge, larger N, or a redefined measure) is the central open problem for the economic layer.
 - **The routing threshold is coarsely tuned.** $\tau_R = 0.30$ comes from a four-point sweep (§8.2.1) over $N=127$: the lowest threshold achieving zero out-of-domain leakage on the tested distribution, which may be conservative on a broader one. A finer sweep against a held-out validation set, with a reported ROC curve, is the appropriate next step.
-- **Distillation is shown only at small scale.** §8.7 establishes attribution under distillation but not a quality gain, which the architecture anticipates only near the ~$10^4$-contribution regime.
+- **Distillation is shown only at small scale, and carries costs.** §8.7 establishes attribution under distillation but not a robust quality gain, which the architecture anticipates only near the ~$10^4$-contribution regime; it also surfaces non-zero entanglement (~0.15–0.20), a forgetting tax (up to −0.20 at 1B), and prompt memorization at the larger model — all measured on the eight-fact corpus and likely to shift with corpus size and recipe.
+- **Routing-based attribution is tested only on well-separated topics.** The perfect routing accuracy of §8.6 is over eight distinct topics with single-example adapters. The realistic stressor — near-duplicate or overlapping contributions within one category, and adapters trained on many examples per contributor — is not yet measured; routed *quality*, as opposed to routed *attribution*, is consequently not yet established.
+- **The governance simulation models one adversary.** The sybil result of §8.8 assumes a single lockstep attacker against a truth-correlated honest crowd. Collusion among already-reputable accounts, adaptive attacks, and a non-stationary honest electorate are not captured.
+- **Quantization is a single-point check.** §3.3's edge-inference path is probed only at 4-bit (grounding lift +0.69 preserved); a clean q4-vs-q8-vs-fp16 comparison to locate a precision floor for self-hosting is outstanding.
 - **Signing is custodial.** The verification of §8.5 establishes integrity and public checkability, but contributor keys are presently derived server-side. Resistance to forgery by the operator requires client-held keys; until then, the "no trust in the operator" property is scoped to verification rather than to signing custody.
 
-### 8.9 Future work
+### 8.10 Future work
 
-The central open problem is a **faithful value measure**. The embedding-resemblance marginal, the natural cheap candidate, failed at scale (§8.6), so the work is no longer to run it on more data but to find a measure that tracks judged quality: a judge-grounded estimator, the Shapley variant scored against a held-out human-referenced judge rather than gold-fact recall, or a redefinition of marginal value (e.g. against answer correctness rather than resemblance to the contribution). This is the prerequisite for the economic layer. Beyond it, the evaluation extends along three axes — scale (a larger, multi-domain corpus to turn the per-claim results of §8.2–§8.4 into statistical estimates and to stress routing as adjacent categories populate), retrieval (instantiating and ablating the dense and cross-encoder stages of §3.4), and distillation (repeating §8.7 on a denser corpus and a larger base model to test for a quality gain alongside the established attribution result).
+The central open problem is a **faithful value measure**. The embedding-resemblance marginal, the natural cheap candidate, is only weakly faithful at scale (§8.6), so the work is less to run it on more data than to find a measure that tracks judged quality. Two routes are now distinguished by evidence. The first is a *judge-grounded estimator* — the Shapley variant scored against a held-out human-referenced judge rather than gold-fact recall, or a redefinition of marginal value against answer correctness rather than resemblance. The second, and the more promising given the §8.6 result, is *attribution by construction*: the per-contributor adapter routing that already attributes at 100% accuracy on separated topics. The decisive experiments there are (i) training each adapter on many examples per contributor so routed *quality* — not just routed attribution — can be measured, and (ii) stressing the router with near-duplicate, overlapping contributions inside a single category, where a payout signal would actually be contested. A faithful value measure is the prerequisite for the economic layer either way.
+
+Beyond it, four further axes. **Serving safety**: §8.8 shows vote-gated retrieval drives false adoption to zero on a synthetic conflict; the production analogue is wiring the authority filter (§3.4) so retrieval can only ever surface the current highest-voted version, and measuring false adoption on the live corpus. **Governance under stronger adversaries**: extending the §8.8 sybil simulation to collusion among reputable accounts and adaptive attacks, and tuning the reputation weighting accordingly. **Scale and retrieval**: a larger, multi-domain corpus to turn the per-claim results of §8.2–§8.4 into statistical estimates and to stress routing as adjacent categories populate, and instantiating the dense and cross-encoder stages of §3.4 to close the retrieval loss measured in §8.3. **Sovereign inference**: a clean multi-level quantization comparison (§8.9) to fix a precision floor for edge self-hosting.
 
 ---
 
 ## 9. Roadmap
 
 ### 0–6 months — Pipeline depth
-- Client-held signing keys (WebCrypto): move key custody off the server so contribution and vote signatures are non-custodial, closing the forgery gap noted in §8.5 and §8.8.
+- Client-held signing keys (WebCrypto): move key custody off the server so contribution and vote signatures are non-custodial, closing the forgery gap noted in §8.5 and §8.9.
 - Phase 2 of governance: triage stage, with reviewer comment + edit-request workflow.
 - Hybrid retrieval (sparse + dense + cross-encoder rerank) replacing pure dense ANN.
-- Structured logging of every `(query, retrieval, answer)` interaction as training data for later distillation.
+- Vote-gated retrieval: surface only the current highest-voted version of a claim, never competing versions side by side — the architectural requirement that §8.8 shows drives false-claim adoption to zero.
+- Reputation-weighted vote aggregation in place of flat tally, for the ~9× sybil-resistance gain quantified in §8.8.
+- Structured logging of every `(query, retrieval, answer)` interaction — with explicit user quality feedback — as both training data for distillation and the held-out signal a faithful value measure (§8.10) can be validated against.
 - First public network instance with 100 invited contributors across 3 categories.
 
 ### 6–18 months — Network growth
@@ -556,13 +632,13 @@ The proposition rests on three claims, and the evidence reported here speaks to 
 
 1. **Layered retrieval over a swappable open base model is a viable serving architecture.** The routing and refusal mechanisms are demonstrated (§8.2, §8.4). Grounding's quality effect is conditional: marginal on facts the base model already knows, but large where it does not — a +0.69 gold-recall gain on invented facts (§8.3). The practical implication is that the network's value comes from knowledge outside the base model's training distribution, not from re-deriving what the base already contains. A direct quality comparison against closed retrieval products is the main piece of evidence still missing for this claim.
 
-2. **Per-claim signed governance makes attribution and payouts computable.** This is the strongest result: verification is cryptographic and reproducible (§8.5), credit is measurable and resists the standard manipulations (§8.6), and the same proof chain that lets a user audit an answer drives the payout ledger.
+2. **Per-claim signed governance makes attribution and payouts computable — and is the system's correctness mechanism.** This is the strongest result: verification is cryptographic and reproducible (§8.5), credit is measurable and resists the standard manipulations (§8.6), and the same proof chain that lets a user audit an answer drives the payout ledger. Governance is also where correctness lives: the model adopts a grounded falsehood 88% of the time (§8.8), but vote-gated retrieval drives that to zero and reputation-weighted voting raises the sybil attacker's cost ~9×. The model supplies fluency; governance supplies truth — and both mechanisms are demonstrated.
 
-3. **The contribution corpus can be distilled into the model with attribution intact.** Demonstrated at small scale (§8.7): a contributor's fact provably enters the weights and is traceable back to its author. The quality benefit of distillation at scale remains open.
+3. **The contribution corpus can be distilled into the model with attribution intact, at a measured cost.** Demonstrated across the corpus on two open base models (§8.7): a contributor's fact provably enters the weights and is traceable to its author (attributable fraction up to 0.88). The transition is not free — distillation carries non-zero entanglement, a forgetting tax, and prompt memorization at the larger model — and the quality benefit at scale remains open.
 
-The economic layer carries one unresolved result that scale has made concrete: the cheap value measure is at best **weakly** faithful. At the full benchmark scale the embedding-based marginal value correlates with judged answer quality only weakly and judge-sensitively (ρ ≈ 0.04–0.15 depending on the grader; §8.6) — too weak, as defined, to set fair payouts. Verifiable attribution and gaming-resistant *ranking* hold; converting a ranking into a faithful *valuation* is the central problem the economic model must still solve.
+The economic layer carries one unresolved result that scale has made concrete: the cheap value measure is at best **weakly** faithful. At the full benchmark scale the embedding-based marginal value correlates with judged answer quality only weakly and judge-sensitively (ρ ≈ 0.04–0.15 depending on the grader; §8.6) — too weak, as defined, to set fair payouts. Verifiable attribution and gaming-resistant *ranking* hold; converting a ranking into a faithful *valuation* is the central problem the economic model must still solve. The most promising route found here is structural rather than statistical: per-contributor adapter routing attributes credit at 100% accuracy on separated topics (§8.6), recasting the valuation problem as a routing-quality problem.
 
-The case is therefore partial by design: the accountability machinery — verifiable attribution and traceable distillation — is the part that is both novel and demonstrated, while the quality and economic-faithfulness claims are bounded by corpus size and remain the work ahead.
+The case is therefore partial by design: the accountability and safety machinery — verifiable attribution, traceable distillation, and governance that converts a defenseless model into a defended system — is the part that is both novel and demonstrated, while the quality and economic-faithfulness claims are bounded by corpus size and remain the work ahead.
 
 ---
 

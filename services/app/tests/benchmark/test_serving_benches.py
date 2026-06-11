@@ -136,3 +136,32 @@ def test_attribution_route_picks_owner_when_signature_matches_query() -> None:
         q = embedder.embed([note])[0]
         routed = int(np.argmax(cosine_sim(q, sigs)))
         assert routed == owner
+
+
+def test_attribution_route_grouped_routes_to_owning_contributor() -> None:
+    """With facts-per-contributor > 1 the router signature is the centroid of a
+    contributor's notes; a query about one of their facts must route to that
+    contributor — the grouped analogue used by --facts-per-contributor."""
+    import math
+
+    notes = [
+        "quic over udp transport for http3",
+        "http3 header compression qpack dynamic table",
+        "rust ownership borrow checker move semantics",
+        "rust lifetimes elision dangling references",
+    ]
+    queries = notes  # exact-match queries; must route to the owning contributor
+    fpc = 2  # -> 2 contributors: c0 owns facts 0,1 ; c1 owns facts 2,3
+    n_contrib = math.ceil(len(notes) / fpc)
+    owner_of = [j // fpc for j in range(len(notes))]
+    facts_of = {
+        c: [j for j in range(len(notes)) if owner_of[j] == c] for c in range(n_contrib)
+    }
+
+    embedder = HashEmbedder(256)
+    note_vecs = embedder.embed(notes)
+    sigs = np.stack([note_vecs[facts_of[c]].mean(axis=0) for c in range(n_contrib)])
+    for j, q_text in enumerate(queries):
+        q = embedder.embed([q_text])[0]
+        routed = int(np.argmax(cosine_sim(q, sigs)))
+        assert routed == owner_of[j]
