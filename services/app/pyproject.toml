@@ -29,7 +29,7 @@ dependencies = [
     # signatures are what make attribution verifiable without trusting the
     # operator — load-bearing, so declared directly rather than relied on
     # transitively.
-    "cryptography>=44",
+    "cryptography>=48.0.1",
     # Auth — verify Firebase ID tokens (uses FIREBASE_AUTH_EMULATOR_HOST
     # automatically in dev; falls back to a Google credentials lookup in
     # production).
@@ -55,13 +55,13 @@ vector = [
 # Host-side dev tools — ipykernel for VS Code's notebook editor. Skipping
 # in the container shaves ~100 MB.
 notebook = [
-    "ipykernel>=6.29",
+    "ipykernel>=7.3.0",
 ]
 # LoRA distillation PoC (dequorum distill-poc). Kept optional so the serving
 # image doesn't carry training deps. transformers comes via sentence-transformers.
 distill = [
     "peft>=0.19",
-    "accelerate>=1.0",
+    "accelerate>=1.14.0",
 ]
 experimental = [
     # Symbolic math for deterministic/algebraic reasoning
@@ -96,7 +96,7 @@ dev = [
     "pytest-xdist>=3.5",
     # Property-based testing: verify mathematical invariants of novel architectures
     "hypothesis>=6.155.2",
-    "ruff>=0.15.16",
+    "ruff>=0.15.17",
     "mypy>=1.20",
     "pre-commit>=4.0",
 ]
