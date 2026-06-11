@@ -1709,6 +1709,7 @@ def _cmd_judge_bench(args: argparse.Namespace) -> int:
     """Validate the quality judge: score known-correct answers (the note) vs
     plausible-but-wrong answers (the false note) against the true gold. A good
     judge separates them; a coarse one over-credits the wrong answer."""
+    from dequorum.benchmark.stats import ci_str
     from dequorum.eval import KeywordRecallJudge, LLMJudge
 
     facts = _select_facts(args)
@@ -1742,11 +1743,12 @@ def _cmd_judge_bench(args: argparse.Namespace) -> int:
             judge.score(query=f.query, answer=f.false_note, reference=f.gold)  # type: ignore[attr-defined]
             for f in facts
         ]
-        pair = mean(
-            [1.0 if c > w else (0.5 if c == w else 0.0) for c, w in zip(correct, wrong)]
-        )
+        pair_list = [
+            1.0 if c > w else (0.5 if c == w else 0.0) for c, w in zip(correct, wrong)
+        ]
+        pair = mean(pair_list)
         sep = mean(correct) - mean(wrong)
-        summary[name] = (sep, pair)
+        summary[name] = (sep, pair, pair_list)
         lines.append(
             f"| {name} | {mean(correct):.3f} | {mean(wrong):.3f} | "
             f"{sep:+.3f} | {pair:.3f} |"
@@ -1758,11 +1760,14 @@ def _cmd_judge_bench(args: argparse.Namespace) -> int:
         "from plausibly-wrong, and any quality number measured with it is suspect.",
         "",
     ]
+    for name, (_sep, _pair, pair_list) in summary.items():
+        lines.append(f"- {name} pairwise accuracy (95% CI): {ci_str(pair_list)}")
+    lines.append("")
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines))
     print(f"Report written: {out}")
-    for name, (sep, pair) in summary.items():
+    for name, (sep, pair, _pl) in summary.items():
         print(f"{name}: separation={sep:+.3f} pairwise_acc={pair:.3f}")
     return 0
 
@@ -1772,6 +1777,7 @@ def _cmd_falsehood_bench(args: argparse.Namespace) -> int:
     the lie? Grounds on each fact's false variant and measures how often the
     answer states the false claim — i.e. whether grounding propagates falsehood."""
     from dequorum.benchmark.novelty import _BASE_SYSTEM, _GROUNDED_SYSTEM
+    from dequorum.benchmark.stats import ci_str
     from dequorum.eval import KeywordRecallJudge
 
     facts = _select_facts(args)
@@ -1802,10 +1808,10 @@ def _cmd_falsehood_bench(args: argparse.Namespace) -> int:
         f"Facts: {len(facts)}. Each is grounded on a plausible-but-FALSE variant of "
         "the contribution; we measure whether the answer adopts the false claim.",
         "",
-        f"- base model, false claim recall (control, expect ~0): {mean(base_false):.3f}",
-        f"- **grounded-on-false, false claim recall: {mean(adopt_false):.3f}** "
+        f"- base model, false claim recall (control, expect ~0): {ci_str(base_false)}",
+        f"- **grounded-on-false, false claim recall: {ci_str(adopt_false)}** "
         "(high ⇒ the model adopts the lie)",
-        f"- grounded-on-false, true claim recall: {mean(keep_true):.3f}",
+        f"- grounded-on-false, true claim recall: {ci_str(keep_true)}",
         "",
         "If grounded-on-false recall is high, grounding faithfully propagates "
         "whatever the contribution asserts, true or false. Correctness therefore "
@@ -1896,6 +1902,7 @@ def _cmd_retrieval_bench(args: argparse.Namespace) -> int:
     realistic BM25 retrieval, and whether false distractors that out-rank the
     truth drag the answer wrong."""
     from dequorum.benchmark.novelty import _BASE_SYSTEM
+    from dequorum.benchmark.stats import ci_str
     from dequorum.eval import KeywordRecallJudge
     from dequorum.retrieval.bm25 import BM25Index
 
@@ -1952,10 +1959,13 @@ def _cmd_retrieval_bench(args: argparse.Namespace) -> int:
                 "false_in_topk": mean(fhit),
                 "grounded": mean(g_recall),
                 "false_adopt": mean(f_adopt),
+                "grounded_list": g_recall,
+                "false_adopt_list": f_adopt,
             }
         )
 
     mean_base, mean_oracle = mean(base), mean(oracle)
+    top_row = rows[-1] if rows else None  # largest k: where both notes co-retrieve
     lines = [
         "# Retrieval-grounded lift (C2b) — the production read path",
         "",
@@ -1969,8 +1979,8 @@ def _cmd_retrieval_bench(args: argparse.Namespace) -> int:
         "loss attributable to retrieval; false-claim adoption shows whether "
         "distractors that out-rank the truth corrupt the answer.",
         "",
-        f"- base (no grounding): {mean_base:.3f}",
-        f"- **oracle (exact note): {mean_oracle:.3f}**",
+        f"- base (no grounding): {ci_str(base)}",
+        f"- **oracle (exact note): {ci_str(oracle)}**",
         "",
         "| top-k | true-note hit@k | false-note in top-k | grounded recall | "
         "retrieval loss vs oracle | false-claim adoption |",
@@ -1982,6 +1992,13 @@ def _cmd_retrieval_bench(args: argparse.Namespace) -> int:
             f"{r['grounded']:.3f} | {mean_oracle - r['grounded']:+.3f} | "
             f"{r['false_adopt']:.3f} |"
         )
+    if top_row is not None:
+        lines += [
+            "",
+            f"At top-{top_row['k']} (both notes co-retrieved): grounded recall "
+            f"{ci_str(top_row['grounded_list'])}, false-claim adoption "
+            f"{ci_str(top_row['false_adopt_list'])} (95% CI).",
+        ]
     lines += [
         "",
         "High hit@k with grounded recall near oracle ⇒ retrieval preserves the "
@@ -2012,6 +2029,7 @@ def _cmd_conflict_bench(args: argparse.Namespace) -> int:
     This extends falsehood-bench (single false note) to the multi-document case
     that retrieval actually produces, and tests the fix: governance must rank
     before grounding."""
+    from dequorum.benchmark.stats import ci_str
     from dequorum.eval import KeywordRecallJudge
 
     facts = _select_facts(args)
@@ -2069,8 +2087,8 @@ def _cmd_conflict_bench(args: argparse.Namespace) -> int:
         "",
         f"- **order sensitivity (answer flip between orderings): {order_sensitivity:.3f}** "
         "(high ⇒ the model is swayed by presentation, not truth)",
-        f"- false-claim recall drops from {both_false:.3f} (both present) to "
-        f"{g_false:.3f} once governance gates retrieval to the upvoted contribution.",
+        f"- false-claim recall (95% CI): both present {ci_str(tf_false + ft_false)}, "
+        f"vote-gated {ci_str(gated_false)} — governance gating drives it to ~0.",
         "",
         "The model cannot arbitrate between conflicting contributions — when both "
         "are present it adopts whichever the ordering favours. Correctness is "
@@ -2456,6 +2474,7 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
 
     from dequorum.attribution.marginal import measure_attribution
     from dequorum.attribution.shapley import shapley_attribution
+    from dequorum.benchmark.stats import ci_str
     from dequorum.core.crypto import generate_signing_key
     from dequorum.eval import KeywordRecallJudge
     from dequorum.knowledge.contribution import Contribution
@@ -2567,11 +2586,11 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
         "**rank-1** is how often the decisive contribution gets the most credit; "
         f"**precision** is the share of credit placed on it (flat baseline = {1.0 / m:.2f}).",
         "",
-        "| method | rank-1 accuracy | mean credit on decisive |",
+        "| method | rank-1 accuracy (95% CI) | mean credit on decisive (95% CI) |",
         "| --- | ---: | ---: |",
     ]
     for mth in methods:
-        lines.append(f"| {mth} | {mean(rank1[mth]):.3f} | {mean(prec[mth]):.3f} |")
+        lines.append(f"| {mth} | {ci_str(rank1[mth])} | {ci_str(prec[mth])} |")
     lines += [
         "",
         f"**Best method: {best}** (rank-1 {mean(rank1[best]):.3f}). A method that "

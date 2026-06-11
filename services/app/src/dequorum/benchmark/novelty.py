@@ -209,6 +209,10 @@ def run_novelty_benchmark(
 
 
 def write_novelty_report(report: NoveltyReport, path: str) -> None:
+    from dequorum.benchmark.stats import ci_str
+
+    base_vals = [r.base_recall for r in report.results]
+    grounded_vals = [r.grounded_recall for r in report.results]
     lines = [
         "# Novelty grounding benchmark",
         "",
@@ -219,8 +223,8 @@ def write_novelty_report(report: NoveltyReport, path: str) -> None:
         "a reference note. The gap is the grounding lift on knowledge the model "
         "cannot have pretrained on.",
         "",
-        f"- mean gold-fact recall, **base model**: {report.mean_base:.3f}",
-        f"- mean gold-fact recall, **grounded**: {report.mean_grounded:.3f}",
+        f"- mean gold-fact recall, **base model**: {ci_str(base_vals)}",
+        f"- mean gold-fact recall, **grounded**: {ci_str(grounded_vals)}",
         f"- **grounding lift: {report.lift:+.3f}**",
         "",
         "| Query | base | grounded |",

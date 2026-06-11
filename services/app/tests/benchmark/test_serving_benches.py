@@ -195,5 +195,7 @@ def test_attribution_truth_flat_is_chance(tmp_path, monkeypatch) -> None:
     text = out.read_text()
     assert "Attribution faithfulness vs known ground truth" in text
     assert "flat (baseline)" in text and "Shapley (judge)" in text
-    # flat credit is uniform over 4 contributions -> chance 0.25 on the decisive one
-    assert "| flat (baseline) | 0.250 | 0.250 |" in text
+    # flat credit is uniform over 4 contributions -> chance 0.25 on the decisive one,
+    # now reported with a 95% CI (e.g. "| flat (baseline) | 0.250 [..] (n=6) | ...").
+    assert "| flat (baseline) | 0.250 [" in text
+    assert "(n=6)" in text  # CI reports the sample size
