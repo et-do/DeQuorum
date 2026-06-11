@@ -361,6 +361,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     jbench.add_argument("--limit", type=int, default=None, help="First N facts")
     jbench.add_argument("--output", default="docs/benchmarks/judge.md")
+    _add_corpus_args(jbench)
 
     fbench = sub.add_parser(
         "falsehood-bench",
@@ -372,6 +373,7 @@ def _build_parser() -> argparse.ArgumentParser:
     fbench.add_argument("--host", default="http://localhost:11434")
     fbench.add_argument("--limit", type=int, default=None, help="First N facts")
     fbench.add_argument("--output", default="docs/benchmarks/falsehood.md")
+    _add_corpus_args(fbench)
 
     novelty = sub.add_parser(
         "novelty-bench",
@@ -388,6 +390,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default="docs/benchmarks/novelty.md",
         help="Where to write the Markdown report",
     )
+    _add_corpus_args(novelty)
 
     retr = sub.add_parser(
         "retrieval-bench",
@@ -406,6 +409,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     retr.add_argument("--limit", type=int, default=None, help="First N facts")
     retr.add_argument("--output", default="docs/benchmarks/retrieval.md")
+    _add_corpus_args(retr)
 
     conflict = sub.add_parser(
         "conflict-bench",
@@ -417,6 +421,7 @@ def _build_parser() -> argparse.ArgumentParser:
     conflict.add_argument("--host", default="http://localhost:11434")
     conflict.add_argument("--limit", type=int, default=None, help="First N facts")
     conflict.add_argument("--output", default="docs/benchmarks/conflict.md")
+    _add_corpus_args(conflict)
 
     gov = sub.add_parser(
         "governance-sim",
@@ -471,6 +476,32 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     aroute.add_argument("--limit", type=int, default=None, help="First N facts")
     aroute.add_argument("--output", default="docs/benchmarks/attribution_route.md")
+    aroute.add_argument("--corpus", choices=["novelty", "synthetic"], default="novelty")
+    aroute.add_argument("--facts", type=int, default=50)
+    aroute.add_argument(
+        "--topics",
+        type=int,
+        default=None,
+        help="Distinct system names; < facts forces near-duplicate contributors",
+    )
+
+    atruth = sub.add_parser(
+        "attribution-truth",
+        help="Faithfulness of credit methods vs KNOWN ground truth: which method "
+        "puts credit on the truly-decisive contribution? (no DB)",
+    )
+    atruth.add_argument("--mock", action="store_true", help="Use mock model")
+    atruth.add_argument("--model", default="", help="Ollama model id/tag")
+    atruth.add_argument("--host", default="http://localhost:11434")
+    atruth.add_argument(
+        "--cited",
+        type=int,
+        default=4,
+        help="Contributions per query (1 decisive + distractors)",
+    )
+    atruth.add_argument("--limit", type=int, default=None, help="First N facts")
+    atruth.add_argument("--output", default="docs/benchmarks/attribution_truth.md")
+    _add_corpus_args(atruth)
 
     cost = sub.add_parser(
         "cost-model", help="Per-query unit economics + break-even (no DB needed)"
@@ -1082,9 +1113,8 @@ def _cmd_distill_poc(args: argparse.Namespace) -> int:
     if corpus == "novelty":
         # Invented facts the base model cannot know — distilling these is where
         # a *quality* gain (not just attribution) should appear. No DB needed.
-        from dequorum.benchmark.novelty import NOVELTY_FACTS
 
-        facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+        facts = _select_facts(args)
         all_examples = [
             TrainingExample(
                 prompt=f.query,
@@ -1208,7 +1238,6 @@ def _cmd_distill_attribution(args: argparse.Namespace) -> int:
 
     import torch
 
-    from dequorum.benchmark.novelty import NOVELTY_FACTS
     from dequorum.benchmark.questions import SEED_QUESTIONS
     from dequorum.distill import (
         TrainingExample,
@@ -1226,7 +1255,7 @@ def _cmd_distill_attribution(args: argparse.Namespace) -> int:
     from dequorum.eval import KeywordRecallJudge, gold_for
 
     judge = KeywordRecallJudge()
-    facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+    facts = _select_facts(args)
     examples = [
         TrainingExample(
             prompt=f.query,
@@ -1400,7 +1429,6 @@ def _cmd_distill_compose(args: argparse.Namespace) -> int:
     from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    from dequorum.benchmark.novelty import NOVELTY_FACTS
     from dequorum.distill.poc import (
         TrainingExample,
         generate,
@@ -1412,7 +1440,7 @@ def _cmd_distill_compose(args: argparse.Namespace) -> int:
     seed_everything(getattr(args, "seed", 0))
 
     judge = KeywordRecallJudge()
-    facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+    facts = _select_facts(args)
     half = len(facts) // 2
     groups = {"A": list(enumerate(facts))[:half], "B": list(enumerate(facts))[half:]}
 
@@ -1589,10 +1617,52 @@ def _cmd_coverage_bench(args: argparse.Namespace) -> int:
     return 0
 
 
+def _add_corpus_args(parser: argparse.ArgumentParser) -> None:
+    """Common invented-fact corpus selection for the no-DB benches: the eight
+    hand-written facts (default) or a generated synthetic corpus at scale."""
+    parser.add_argument(
+        "--corpus",
+        choices=["novelty", "synthetic"],
+        default="novelty",
+        help="Invented-fact corpus: 8 hand-written facts, or a generated set at scale",
+    )
+    parser.add_argument(
+        "--facts",
+        type=int,
+        default=50,
+        help="Number of synthetic facts (with --corpus synthetic)",
+    )
+    parser.add_argument(
+        "--topics",
+        type=int,
+        default=None,
+        help="Distinct system names; < facts forces near-duplicate facts",
+    )
+    parser.add_argument("--seed", type=int, default=0)
+
+
+def _select_facts(args: argparse.Namespace):
+    """Resolve the invented-fact corpus from common bench args. Backwards-safe:
+    benches that don't expose the corpus args fall back to the novelty set."""
+    from dequorum.benchmark.novelty import NOVELTY_FACTS
+
+    if getattr(args, "corpus", "novelty") == "synthetic":
+        from dequorum.benchmark.synthetic import generate_facts
+
+        facts = generate_facts(
+            getattr(args, "facts", 50),
+            seed=getattr(args, "seed", 0),
+            topics=getattr(args, "topics", None),
+        )
+    else:
+        facts = NOVELTY_FACTS
+    limit = getattr(args, "limit", None)
+    return facts if limit is None else facts[:limit]
+
+
 def _cmd_novelty_bench(args: argparse.Namespace) -> int:
     """Grounding lift on invented facts; needs only a model (no DB)."""
     from dequorum.benchmark.novelty import (
-        NOVELTY_FACTS,
         run_novelty_benchmark,
         write_novelty_report,
     )
@@ -1608,7 +1678,7 @@ def _cmd_novelty_bench(args: argparse.Namespace) -> int:
         )
         label = resolve_ollama_tag(args.model or DEFAULT_BASE_MODEL_ID)
 
-    facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+    facts = _select_facts(args)
 
     def progress(i: int, total: int, text: str) -> None:
         print(f"  [{i}/{total}] {text[:80]}", flush=True)
@@ -1639,10 +1709,9 @@ def _cmd_judge_bench(args: argparse.Namespace) -> int:
     """Validate the quality judge: score known-correct answers (the note) vs
     plausible-but-wrong answers (the false note) against the true gold. A good
     judge separates them; a coarse one over-credits the wrong answer."""
-    from dequorum.benchmark.novelty import NOVELTY_FACTS
     from dequorum.eval import KeywordRecallJudge, LLMJudge
 
-    facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+    facts = _select_facts(args)
 
     def mean(xs: list[float]) -> float:
         return sum(xs) / len(xs) if xs else 0.0
@@ -1702,10 +1771,10 @@ def _cmd_falsehood_bench(args: argparse.Namespace) -> int:
     """Does grounding on a plausible-but-FALSE contribution make the model adopt
     the lie? Grounds on each fact's false variant and measures how often the
     answer states the false claim — i.e. whether grounding propagates falsehood."""
-    from dequorum.benchmark.novelty import _BASE_SYSTEM, _GROUNDED_SYSTEM, NOVELTY_FACTS
+    from dequorum.benchmark.novelty import _BASE_SYSTEM, _GROUNDED_SYSTEM
     from dequorum.eval import KeywordRecallJudge
 
-    facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+    facts = _select_facts(args)
     judge = KeywordRecallJudge()
     model = _judge_bench_model(args)
 
@@ -1826,11 +1895,11 @@ def _cmd_retrieval_bench(args: argparse.Namespace) -> int:
     and grounds on the top-k. This measures how much of the oracle lift survives
     realistic BM25 retrieval, and whether false distractors that out-rank the
     truth drag the answer wrong."""
-    from dequorum.benchmark.novelty import _BASE_SYSTEM, NOVELTY_FACTS
+    from dequorum.benchmark.novelty import _BASE_SYSTEM
     from dequorum.eval import KeywordRecallJudge
     from dequorum.retrieval.bm25 import BM25Index
 
-    facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+    facts = _select_facts(args)
     judge = KeywordRecallJudge()
     model = _grounding_model(args)
     contributions, true_ids, false_ids = _bench_contributions(facts)
@@ -1943,10 +2012,9 @@ def _cmd_conflict_bench(args: argparse.Namespace) -> int:
     This extends falsehood-bench (single false note) to the multi-document case
     that retrieval actually produces, and tests the fix: governance must rank
     before grounding."""
-    from dequorum.benchmark.novelty import NOVELTY_FACTS
     from dequorum.eval import KeywordRecallJudge
 
-    facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+    facts = _select_facts(args)
     judge = KeywordRecallJudge()
     model = _grounding_model(args)
 
@@ -2138,9 +2206,9 @@ def _cmd_quant_bench(args: argparse.Namespace) -> int:
     checks the cost lever doesn't silently break the core mechanism: if grounding
     lift holds from high to low precision, cheap edge inference is safe; if it
     collapses at low bit-width, there's a precision floor for self-hosting."""
-    from dequorum.benchmark.novelty import NOVELTY_FACTS, run_novelty_benchmark
+    from dequorum.benchmark.novelty import run_novelty_benchmark
 
-    facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+    facts = _select_facts(args)
 
     # Per-model resilience: a flaky/missing tag (Ollama 500, OOM, bad pull) must
     # not discard the levels that already succeeded. Record failures and carry on.
@@ -2222,7 +2290,6 @@ def _cmd_attribution_route(args: argparse.Namespace) -> int:
     from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    from dequorum.benchmark.novelty import NOVELTY_FACTS
     from dequorum.distill.poc import (
         TrainingExample,
         generate,
@@ -2233,7 +2300,7 @@ def _cmd_attribution_route(args: argparse.Namespace) -> int:
     from dequorum.routing.embedder import SentenceTransformerEmbedder, cosine_sim
 
     seed_everything(args.seed)
-    facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
+    facts = _select_facts(args)
     fpc = max(1, getattr(args, "facts_per_contributor", 1))
     n_contrib = math.ceil(len(facts) / fpc)
     owner_of = [j // fpc for j in range(len(facts))]  # contributor that owns fact j
@@ -2369,6 +2436,161 @@ def _cmd_attribution_route(args: argparse.Namespace) -> int:
     return 0
 
 
+def _truth_embedder(args: argparse.Namespace):
+    from dequorum.routing.embedder import SentenceTransformerEmbedder
+
+    return SentenceTransformerEmbedder()
+
+
+def _cmd_attribution_truth(args: argparse.Namespace) -> int:
+    """Faithfulness of the credit measure against KNOWN ground truth.
+
+    Claim 5's open problem is that the credit ratio is only weakly faithful — but
+    that was measured by correlating two noisy estimates. With *invented* facts we
+    know exactly which contribution is decisive for each query (the one containing
+    the gold). So we assemble that decisive contribution plus distractors, run each
+    credit method, and measure directly how often it puts the most credit on the
+    truly-decisive contribution (rank-1 accuracy) and how much (precision). The
+    flat baseline is 1/m by construction; a faithful measure must beat it."""
+    import random as _random
+
+    from dequorum.attribution.marginal import measure_attribution
+    from dequorum.attribution.shapley import shapley_attribution
+    from dequorum.core.crypto import generate_signing_key
+    from dequorum.eval import KeywordRecallJudge
+    from dequorum.knowledge.contribution import Contribution
+    from dequorum.retrieval.bm25 import BM25Index, ScoredContribution
+
+    facts = _select_facts(args)
+    judge = KeywordRecallJudge()
+    model = _grounding_model(args)
+    embedder = _truth_embedder(args)
+    rng = _random.Random(getattr(args, "seed", 0))
+    m = max(2, args.cited)  # contributions per query: 1 decisive + (m-1) distractors
+    persona = "You are a precise assistant. Answer the question from the references."
+
+    key = generate_signing_key()
+    contribs = [
+        Contribution.create(
+            contributor_id=f"dq:c{i}",
+            text=f.note,
+            citations=(),
+            signing_key=key,
+            primary_category_id="bench",
+        )
+        for i, f in enumerate(facts)
+    ]
+
+    def normalize(vals: list[float]) -> list[float]:
+        s = sum(vals)
+        return [v / s for v in vals] if s > 0 else [1.0 / len(vals)] * len(vals)
+
+    def scorer(query: str, ref):
+        def score(ans: str) -> float:
+            return judge.score(query=query, answer=ans, reference=ref)
+
+        return score
+
+    methods = [
+        "flat (baseline)",
+        "retrieval score",
+        "embedding-marginal",
+        "judge-marginal",
+        "Shapley (judge)",
+    ]
+    rank1: dict[str, list[float]] = {mth: [] for mth in methods}
+    prec: dict[str, list[float]] = {mth: [] for mth in methods}
+
+    for i, f in enumerate(facts):
+        others = [j for j in range(len(facts)) if j != i]
+        rng.shuffle(others)
+        cset = [contribs[i]] + [contribs[j] for j in others[: m - 1]]
+        retrieved = BM25Index.build(cset).rank(f.query, top_k=len(cset))
+        ids = [sc.contribution.contribution_id for sc in retrieved]
+        # BM25 drops zero-score docs; force-include any missing cited contribution
+        # so every method scores the same set (the decisive one especially).
+        present = set(ids)
+        for c in cset:
+            if c.contribution_id not in present:
+                retrieved.append(ScoredContribution(contribution=c, score=0.0))
+        ids = [sc.contribution.contribution_id for sc in retrieved]
+        decisive = ids.index(contribs[i].contribution_id)
+
+        print(f"  [{i + 1}/{len(facts)}] {f.query[:60]}", flush=True)
+        score_answer = scorer(f.query, f.gold)
+        credits = measure_attribution(
+            query=f.query,
+            persona_prompt=persona,
+            retrieved=retrieved,
+            model=model,
+            embedder=embedder,
+            score_answer=score_answer,
+        )
+        shap = shapley_attribution(
+            query=f.query,
+            persona_prompt=persona,
+            retrieved=retrieved,
+            model=model,
+            score_answer=score_answer,
+            exact_max_n=6,
+            seed=getattr(args, "seed", 0),
+        )
+        vectors = {
+            "flat (baseline)": [1.0 / len(retrieved)] * len(retrieved),
+            "retrieval score": normalize([sc.score for sc in retrieved]),
+            "embedding-marginal": [c.credit_weight for c in credits],
+            "judge-marginal": normalize(
+                [max(0.0, c.judge_marginal or 0.0) for c in credits]
+            ),
+            "Shapley (judge)": [c.credit_weight for c in shap],
+        }
+        for mth, vec in vectors.items():
+            hi = max(vec)
+            tied = [k for k in range(len(vec)) if abs(vec[k] - hi) < 1e-12]
+            # Tie-aware: uniform credit (flat) scores chance 1/len(tied), not a
+            # spurious win from argmax defaulting to the first index.
+            rank1[mth].append(1.0 / len(tied) if decisive in tied else 0.0)
+            prec[mth].append(vec[decisive])
+
+    def mean(xs: list[float]) -> float:
+        return sum(xs) / len(xs) if xs else 0.0
+
+    best = max(methods, key=lambda mth: mean(rank1[mth]))
+    lines = [
+        "# Attribution faithfulness vs known ground truth",
+        "",
+        f"Model: `{args.model or 'mock'}` · facts {len(facts)} · "
+        f"contributions per query {m} (1 decisive + {m - 1} distractors)",
+        "",
+        "Each invented fact has exactly one decisive contribution (the note "
+        "containing its gold). We measure how well each credit method recovers it: "
+        "**rank-1** is how often the decisive contribution gets the most credit; "
+        f"**precision** is the share of credit placed on it (flat baseline = {1.0 / m:.2f}).",
+        "",
+        "| method | rank-1 accuracy | mean credit on decisive |",
+        "| --- | ---: | ---: |",
+    ]
+    for mth in methods:
+        lines.append(f"| {mth} | {mean(rank1[mth]):.3f} | {mean(prec[mth]):.3f} |")
+    lines += [
+        "",
+        f"**Best method: {best}** (rank-1 {mean(rank1[best]):.3f}). A method that "
+        f"beats the flat baseline ({1.0 / m:.2f} precision, "
+        f"{1.0 / m:.2f} rank-1 by chance) is recovering real causal value; one that "
+        "does not is no better than splitting credit evenly. This is the faithful-"
+        "value question of Claim 5, measured against ground truth instead of a "
+        "noisy judge correlation.",
+        "",
+    ]
+    out = Path(args.output)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines))
+    print(f"Report written: {out}")
+    for mth in methods:
+        print(f"{mth}: rank1={mean(rank1[mth]):.3f} precision={mean(prec[mth]):.3f}")
+    return 0
+
+
 def _cmd_cost_model(args: argparse.Namespace) -> int:
     """Print per-query unit economics; no database or model required."""
     from dequorum.economics import CostModel
@@ -2461,6 +2683,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _cmd_quant_bench(args)
     if args.cmd == "attribution-route":
         return _cmd_attribution_route(args)
+    if args.cmd == "attribution-truth":
+        return _cmd_attribution_truth(args)
     if args.cmd == "cost-model":
         return _cmd_cost_model(args)
     if args.cmd == "novelty-bench":

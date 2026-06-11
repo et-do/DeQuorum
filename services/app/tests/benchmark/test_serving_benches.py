@@ -165,3 +165,35 @@ def test_attribution_route_grouped_routes_to_owning_contributor() -> None:
         q = embedder.embed([q_text])[0]
         routed = int(np.argmax(cosine_sim(q, sigs)))
         assert routed == owner_of[j]
+
+
+def test_attribution_truth_flat_is_chance(tmp_path, monkeypatch) -> None:
+    """attribution-truth runs end-to-end and scores the flat baseline at chance
+    (1/m) — the property that lets it distinguish a faithful method from credit-
+    splitting. Real method quality is measured on GPU; here we assert the harness."""
+    import dequorum.cli as cli
+    from dequorum.routing.embedder import HashEmbedder
+
+    monkeypatch.setattr(cli, "_grounding_model", lambda args: _EchoSystemModel())
+    monkeypatch.setattr(cli, "_truth_embedder", lambda args: HashEmbedder(256))
+    out = tmp_path / "at.md"
+    rc = cli._cmd_attribution_truth(
+        _ns(
+            mock=True,
+            model="",
+            host="",
+            cited=4,
+            limit=6,
+            output=str(out),
+            corpus="synthetic",
+            facts=6,
+            topics=None,
+            seed=0,
+        )
+    )
+    assert rc == 0
+    text = out.read_text()
+    assert "Attribution faithfulness vs known ground truth" in text
+    assert "flat (baseline)" in text and "Shapley (judge)" in text
+    # flat credit is uniform over 4 contributions -> chance 0.25 on the decisive one
+    assert "| flat (baseline) | 0.250 | 0.250 |" in text
