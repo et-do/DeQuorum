@@ -99,6 +99,27 @@ def test_quant_bench_writes_row_per_model(tmp_path, monkeypatch) -> None:
     assert "Verdict" in text
 
 
+def test_quant_bench_survives_a_failing_model(tmp_path, monkeypatch) -> None:
+    """A flaky/missing tag (Ollama 500, OOM, bad pull) must not discard the levels
+    that already succeeded — the run records the failure and still writes a report."""
+    import dequorum.cli as cli
+
+    def factory(tag, args):
+        if "q8" in tag:
+            raise RuntimeError("Ollama 500")
+        return _EchoSystemModel()
+
+    monkeypatch.setattr(cli, "_quant_model", factory)
+    out = tmp_path / "quant.md"
+    rc = _cmd_quant_bench(
+        _ns(models=["m-q4", "m-q8"], host="", limit=3, output=str(out))
+    )
+    assert rc == 0  # did not crash
+    text = out.read_text()
+    assert "`m-q4`" in text  # the successful level is recorded
+    assert "failed" in text  # the broken level is flagged, not silently dropped
+
+
 def test_attribution_route_picks_owner_when_signature_matches_query() -> None:
     """The attribution-by-construction router embeds each contributor's note and
     routes a query to the nearest. With an exact lexical match it must pick the

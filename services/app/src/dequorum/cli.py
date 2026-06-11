@@ -2135,16 +2135,30 @@ def _cmd_quant_bench(args: argparse.Namespace) -> int:
 
     facts = NOVELTY_FACTS if args.limit is None else NOVELTY_FACTS[: args.limit]
 
+    # Per-model resilience: a flaky/missing tag (Ollama 500, OOM, bad pull) must
+    # not discard the levels that already succeeded. Record failures and carry on.
     rows = []
+    failed = []
     for tag in args.models:
         print(f"  [{tag}] running grounding benchmark...", flush=True)
-        rep = run_novelty_benchmark(_quant_model(tag, args), facts=facts)  # type: ignore[arg-type]
+        try:
+            rep = run_novelty_benchmark(_quant_model(tag, args), facts=facts)  # type: ignore[arg-type]
+        except Exception as e:  # report and continue, don't crash the whole suite
+            print(f"  [{tag}] FAILED: {e.__class__.__name__}: {e}", flush=True)
+            failed.append(tag)
+            continue
         rows.append((tag, rep.mean_base, rep.mean_grounded, rep.lift))
 
     lifts = [r[3] for r in rows]
-    spread = (max(lifts) - min(lifts)) if lifts else 0.0
+    spread = (max(lifts) - min(lifts)) if len(lifts) >= 2 else 0.0
     if not rows:
-        verdict = "**Verdict:** no models ran."
+        verdict = "**Verdict:** no models ran successfully — see failures above."
+    elif len(rows) == 1:
+        verdict = (
+            f"**Verdict: inconclusive** — only one level ran (`{rows[0][0]}`, lift "
+            f"{rows[0][3]:+.3f}); need ≥2 quantization levels to compare. Re-run the "
+            "missing tag(s)."
+        )
     elif spread <= 0.1:
         verdict = (
             f"**Verdict: robust.** Grounding lift varies by only {spread:.3f} across "
@@ -2170,6 +2184,8 @@ def _cmd_quant_bench(args: argparse.Namespace) -> int:
     ]
     for tag, base, grounded, lift in rows:
         lines.append(f"| `{tag}` | {base:.3f} | {grounded:.3f} | {lift:+.3f} |")
+    for tag in failed:
+        lines.append(f"| `{tag}` | — | — | failed (unreachable/unpulled) |")
     lines += ["", verdict, ""]
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
