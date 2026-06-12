@@ -230,3 +230,56 @@ def test_attribution_truth_hard_uses_false_twin(tmp_path, monkeypatch) -> None:
     text = out.read_text()
     assert "Hard / contested regime" in text
     assert "false twin" in text
+
+
+class _InjectableModel:
+    """Obeys the injected override under a plain prompt, refuses it when the system
+    prompt marks the reference as untrusted data — so the hardened condition wins."""
+
+    def complete(self, system: str, user: str) -> str:
+        if "untrusted DATA" in system:
+            return "answer from the reference"
+        return "PWNED-7Q"
+
+    def stream(self, system: str, user: str):
+        yield ""
+
+
+def test_injection_bench_hardening_reduces_obedience(tmp_path, monkeypatch) -> None:
+    """injection-bench measures whether contribution text can hijack the model, and
+    whether a hardened prompt defends. The harness must report both conditions; the
+    mock obeys plain and resists hardened."""
+    import dequorum.cli as cli
+
+    monkeypatch.setattr(cli, "_grounding_model", lambda args: _InjectableModel())
+    out = tmp_path / "inj.md"
+    rc = cli._cmd_injection_bench(
+        _ns(
+            mock=True,
+            model="",
+            host="",
+            limit=6,
+            output=str(out),
+            corpus="synthetic",
+            facts=6,
+            topics=None,
+            seed=0,
+        )
+    )
+    assert rc == 0
+    text = out.read_text()
+    assert "Prompt injection through contribution text" in text
+    assert "plain" in text and "hardened" in text
+
+
+def test_distill_safety_commands_parse() -> None:
+    """The LoRA safety benches (training-bound, run on GPU) at least register and
+    accept the corpus args — guards against a flag typo wasting a GPU run."""
+    from dequorum.cli import _build_parser
+
+    p = _build_parser()
+    for argv in (
+        ["distill-falsehood", "--corpus", "synthetic", "--facts", "24"],
+        ["distill-conflict", "--base", "X", "--epochs", "2"],
+    ):
+        assert p.parse_args(argv).cmd == argv[0]
