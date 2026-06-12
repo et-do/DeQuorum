@@ -199,3 +199,34 @@ def test_attribution_truth_flat_is_chance(tmp_path, monkeypatch) -> None:
     # now reported with a 95% CI (e.g. "| flat (baseline) | 0.250 [..] (n=6) | ...").
     assert "| flat (baseline) | 0.250 [" in text
     assert "(n=6)" in text  # CI reports the sample size
+
+
+def test_attribution_truth_hard_uses_false_twin(tmp_path, monkeypatch) -> None:
+    """--distractors hard puts each fact's false twin in the cited set (the contested
+    regime). The report must declare the hard regime; the ground-truth decisive note
+    is still the TRUE one, so credit must land there despite the near-identical twin."""
+    import dequorum.cli as cli
+    from dequorum.routing.embedder import HashEmbedder
+
+    monkeypatch.setattr(cli, "_grounding_model", lambda args: _EchoSystemModel())
+    monkeypatch.setattr(cli, "_truth_embedder", lambda args: HashEmbedder(256))
+    out = tmp_path / "hard.md"
+    rc = cli._cmd_attribution_truth(
+        _ns(
+            mock=True,
+            model="",
+            host="",
+            cited=4,
+            limit=6,
+            output=str(out),
+            corpus="synthetic",
+            facts=6,
+            topics=None,
+            seed=0,
+            distractors="hard",
+        )
+    )
+    assert rc == 0
+    text = out.read_text()
+    assert "Hard / contested regime" in text
+    assert "false twin" in text

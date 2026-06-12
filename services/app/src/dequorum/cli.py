@@ -499,6 +499,13 @@ def _build_parser() -> argparse.ArgumentParser:
         default=4,
         help="Contributions per query (1 decisive + distractors)",
     )
+    atruth.add_argument(
+        "--distractors",
+        choices=["random", "hard"],
+        default="random",
+        help="random: unrelated notes (easy/sanity). hard: include the fact's false "
+        "twin (contested regime — the real faithfulness test).",
+    )
     atruth.add_argument("--limit", type=int, default=None, help="First N facts")
     atruth.add_argument("--output", default="docs/benchmarks/attribution_truth.md")
     _add_corpus_args(atruth)
@@ -2488,17 +2495,27 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
     m = max(2, args.cited)  # contributions per query: 1 decisive + (m-1) distractors
     persona = "You are a precise assistant. Answer the question from the references."
 
+    hard = getattr(args, "distractors", "random") == "hard"
     key = generate_signing_key()
-    contribs = [
-        Contribution.create(
-            contributor_id=f"dq:c{i}",
-            text=f.note,
+
+    def _contrib(cid: str, text: str) -> Contribution:
+        return Contribution.create(
+            contributor_id=cid,
+            text=text,
             citations=(),
             signing_key=key,
             primary_category_id="bench",
         )
-        for i, f in enumerate(facts)
-    ]
+
+    contribs = [_contrib(f"dq:c{i}", f.note) for i, f in enumerate(facts)]
+    # Hard mode: each fact's own false twin (same wording, flipped value) is the
+    # hardest distractor — lexically near-identical to the decisive note and adopted
+    # ~80% of the time (conflict-bench). Credit must still land on the TRUE note.
+    false_twins = (
+        [_contrib(f"dq:c{i}-false", f.false_note) for i, f in enumerate(facts)]
+        if hard
+        else None
+    )
 
     def normalize(vals: list[float]) -> list[float]:
         s = sum(vals)
@@ -2523,7 +2540,12 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
     for i, f in enumerate(facts):
         others = [j for j in range(len(facts)) if j != i]
         rng.shuffle(others)
-        cset = [contribs[i]] + [contribs[j] for j in others[: m - 1]]
+        if false_twins is not None:
+            cset = [contribs[i], false_twins[i]] + [
+                contribs[j] for j in others[: m - 2]
+            ]
+        else:
+            cset = [contribs[i]] + [contribs[j] for j in others[: m - 1]]
         retrieved = BM25Index.build(cset).rank(f.query, top_k=len(cset))
         ids = [sc.contribution.contribution_id for sc in retrieved]
         # BM25 drops zero-score docs; force-include any missing cited contribution
@@ -2574,12 +2596,33 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
     def mean(xs: list[float]) -> float:
         return sum(xs) / len(xs) if xs else 0.0
 
-    best = max(methods, key=lambda mth: mean(rank1[mth]))
+    # Best non-baseline method, ties broken by precision then by name (deterministic).
+    candidates = [mth for mth in methods if mth != "flat (baseline)"]
+    best = max(candidates, key=lambda mth: (mean(rank1[mth]), mean(prec[mth]), mth))
+    beats_chance = mean(rank1[best]) > mean(rank1["flat (baseline)"]) + 0.05
+    if hard:
+        regime = (
+            "**Hard / contested regime:** each query's distractor set includes the "
+            "fact's own false twin (near-identical wording, flipped value — the "
+            "version the model adopts ~80% of the time). This is the regime that "
+            "matters for payouts: credit must land on the TRUE note even when a "
+            "plausible competitor is present."
+        )
+        decisive_note = "1 decisive + its false twin + others"
+    else:
+        regime = (
+            "**Separable regime (sanity check):** distractors are unrelated notes, so "
+            "the decisive contribution is the only on-topic one. This bounds the easy "
+            "case; the contested regime (`--distractors hard`) is the real test."
+        )
+        decisive_note = f"1 decisive + {m - 1} distractors"
     lines = [
         "# Attribution faithfulness vs known ground truth",
         "",
         f"Model: `{args.model or 'mock'}` · facts {len(facts)} · "
-        f"contributions per query {m} (1 decisive + {m - 1} distractors)",
+        f"contributions per query {m} ({decisive_note})",
+        "",
+        regime,
         "",
         "Each invented fact has exactly one decisive contribution (the note "
         "containing its gold). We measure how well each credit method recovers it: "
@@ -2591,14 +2634,21 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
     ]
     for mth in methods:
         lines.append(f"| {mth} | {ci_str(rank1[mth])} | {ci_str(prec[mth])} |")
+    verdict = (
+        f"**Best method: {best}** (rank-1 {mean(rank1[best]):.3f}, precision "
+        f"{mean(prec[best]):.3f})"
+        + (
+            " — clears the flat baseline, so it recovers real causal value."
+            if beats_chance
+            else " — but it does NOT clear the flat baseline, so no method here is "
+            "better than splitting credit evenly in this regime."
+        )
+    )
     lines += [
         "",
-        f"**Best method: {best}** (rank-1 {mean(rank1[best]):.3f}). A method that "
-        f"beats the flat baseline ({1.0 / m:.2f} precision, "
-        f"{1.0 / m:.2f} rank-1 by chance) is recovering real causal value; one that "
-        "does not is no better than splitting credit evenly. This is the faithful-"
-        "value question of Claim 5, measured against ground truth instead of a "
-        "noisy judge correlation.",
+        verdict,
+        f" Flat chance is {1.0 / m:.2f}. This is the faithful-value question of "
+        "Claim 5, measured against ground truth instead of a noisy judge correlation.",
         "",
     ]
     out = Path(args.output)
