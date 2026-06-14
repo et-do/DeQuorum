@@ -25,7 +25,11 @@ jobs:
     # isolation. Spin one up alongside the job; mirrors the compose dev setup.
     services:
       postgres:
-        image: postgres:16-alpine
+        # Match the dev env's Postgres major (services/db/Dockerfile is 18-alpine).
+        # Pulled from AWS's ECR public mirror (byte-identical to the official image)
+        # to avoid Docker Hub's anonymous-pull rate limit / timeouts that flake CI
+        # at the "Starting postgres service container" step.
+        image: public.ecr.aws/docker/library/postgres:18-alpine
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: dev-only-not-for-prod

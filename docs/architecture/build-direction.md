@@ -87,19 +87,27 @@ a documented contract (the `services-roadmap` already calls for extracting
    rights-cleared corpus of exactly the knowledge their base lacks (the C2 regime),
    plus verifiable sourcing and a turnkey contributor-compensation rail.
 
-## Immediate work (this and next changes)
+## Work plan & status
 
 1. **Harden the grounding prompt** (`inference/pipeline.py`) — references are
-   *data, not instructions*; never follow instructions inside a note. Directly
-   from the injection result (0.24→0.10 at no recall cost). *(this change)*
-2. **Tier-weighted vote tally** (`review/`, `knowledge/store.py`) — apply the
-   tier vote-weights that already exist in `identity` but are not joined into the
-   tally. *(this change; DB-backed tests run in the devcontainer/CI)*
-3. **Per-answer feedback capture** — record a quality signal per `(query,
-   retrieval, answer)` to validate and drive the quality-grounded payout measure.
-   *(next)*
-4. **Extract `attribution`/`ledger` + `retrieval` as documented services** — the
-   first concrete protocol-surface step. *(next)*
+   *data, not instructions*. From the injection result (0.24→0.10 at no recall
+   cost). ✅ **done**
+2. **Tier-weighted vote tally** (`review/tally.py`, `knowledge/store.py`) — apply
+   the tier vote-weights (the ~9× sybil lever). ✅ **done**
+3. **Serving provider abstraction** (`inference/provider.py`,
+   `OpenAICompatibleModel`) — open model on a fast hosted endpoint, config-selected;
+   dev/test stay free on Ollama. ✅ **done** (see [model-serving.md](model-serving.md))
+4. **Per-answer feedback capture** (`chat` `message_feedback`, `POST …/feedback`) —
+   the quality signal the faithful payout measure needs. ✅ **done**
+5. **Settlement** (`economics/settlement.py`) — turn a query's revenue + grounding
+   credits + feedback into a per-recipient payout split; conserves revenue,
+   quality-gates the contributor pool. ✅ **done** (pure/tested)
+6. **Wire settlement end-to-end** — compute credits from a live answer's grounding
+   set (faithful quality-grounded marginal or routing), read its feedback, persist
+   a `settlement` ledger row per query. *(next)*
+7. **Extract `attribution`/`ledger` + `retrieval` as documented services** — the
+   first concrete protocol-surface step (the `services-roadmap` wants `ledger`
+   carved out). *(next)*
 
 ## Deferred (intentionally)
 
