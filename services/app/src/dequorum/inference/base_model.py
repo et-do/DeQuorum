@@ -119,6 +119,99 @@ class OllamaBaseModel:
 
 
 @dataclass(frozen=True, slots=True)
+class OpenAICompatibleModel:
+    """Talks to any OpenAI-compatible `/chat/completions` endpoint.
+
+    One client covers Groq, DeepInfra, Together, Fireworks, OpenRouter, vLLM, and
+    Ollama's own `/v1` — they all speak the same wire format, so switching providers
+    is just a `base_url` + `api_key` + `model` change. This is how the network serves
+    an *open* model from a fast hosted provider without leaving the open-model lane
+    (the 1-minute self-hosted-Ollama latency is a self-hosting artifact, not a tax on
+    open weights).
+
+    Responsibility note: the operator must point this at an openly-licensed model
+    (Apache-2.0 / MIT — Qwen, Mistral, OLMo, …). A user-supplied key pointing at a
+    closed model is *serving-only*; closed-model output must never feed the
+    contribution corpus or distillation (their terms forbid training competing
+    models). See docs/architecture/model-serving.md.
+    """
+
+    model: str
+    base_url: str = "https://api.openai.com/v1"
+    api_key: str = ""
+    timeout_seconds: float = 120.0
+    num_predict: int = 512
+
+    def _payload(self, system: str, user: str, *, stream: bool) -> dict:
+        return {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "stream": stream,
+            "temperature": 0.0,
+            "max_tokens": self.num_predict,
+        }
+
+    def _request(self, payload: dict) -> request.Request:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return request.Request(
+            f"{self.base_url.rstrip('/')}/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers=headers,
+        )
+
+    def complete(self, system: str, user: str) -> str:
+        req = self._request(self._payload(system, user, stream=False))
+        try:
+            with request.urlopen(req, timeout=self.timeout_seconds) as resp:
+                body = json.loads(resp.read().decode())
+        except (error.URLError, TimeoutError) as exc:
+            raise CompositionError(
+                f"Model provider unreachable at {self.base_url}: {exc}"
+            ) from exc
+        choices = body.get("choices") or []
+        content = choices[0].get("message", {}).get("content") if choices else None
+        if not content:
+            raise CompositionError(f"Provider returned no content: {body!r}")
+        return str(content)
+
+    def stream(self, system: str, user: str) -> Iterator[str]:
+        """Yield incremental content deltas from an SSE `chat/completions` stream.
+
+        Each event is a `data: {json}` line; `data: [DONE]` terminates the stream.
+        """
+        req = self._request(self._payload(system, user, stream=True))
+        try:
+            resp = request.urlopen(req, timeout=self.timeout_seconds)
+        except (error.URLError, TimeoutError) as exc:
+            raise CompositionError(
+                f"Model provider unreachable at {self.base_url}: {exc}"
+            ) from exc
+        try:
+            for raw in resp:
+                line = raw.decode().strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[len("data:") :].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    obj = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                delta = (obj.get("choices") or [{}])[0].get("delta", {})
+                content = delta.get("content")
+                if content:
+                    yield content
+        finally:
+            resp.close()
+
+
+@dataclass(frozen=True, slots=True)
 class MockBaseModel:
     """Deterministic mock: returns a templated response. Useful for tests + CI."""
 

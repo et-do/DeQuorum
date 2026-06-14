@@ -42,8 +42,9 @@ from dequorum.identity.agreement import current_agreement
 from dequorum.identity.contributor import Tier
 from dequorum.identity.seeds import commenter_for_uid, commenter_record_for_uid
 from dequorum.identity.seeds import populate as populate_seed_contributors
-from dequorum.inference.base_model import BaseModel, MockBaseModel, OllamaBaseModel
+from dequorum.inference.base_model import BaseModel
 from dequorum.inference.pipeline import _augment_system_prompt
+from dequorum.inference.provider import build_serving_model
 from dequorum.intake import DuplicateDetector, SubmissionPipeline
 from dequorum.knowledge.seeds import populate as populate_seed_contributions
 from dequorum.knowledge.store import (
@@ -83,6 +84,21 @@ class AppConfig:
             "DEQUORUM_OLLAMA_HOST", "http://localhost:11434"
         )
     )
+    # Serving model provider: "ollama" (default; free self-hosted) or "openai"
+    # (any OpenAI-compatible hosted endpoint — Groq/DeepInfra/Together/…). Dev and
+    # tests stay on ollama/mock at $0; production opts into a fast hosted open model.
+    # See docs/architecture/model-serving.md.
+    model_provider: str = field(
+        default_factory=lambda: os.environ.get("DEQUORUM_MODEL_PROVIDER", "ollama")
+    )
+    # For the openai provider: endpoint, key, and model tag at that provider.
+    model_base_url: str = field(
+        default_factory=lambda: os.environ.get("DEQUORUM_MODEL_BASE_URL", "")
+    )
+    model_api_key: str = field(
+        default_factory=lambda: os.environ.get("DEQUORUM_MODEL_API_KEY", "")
+    )
+    model: str = field(default_factory=lambda: os.environ.get("DEQUORUM_MODEL", ""))
     top_k: int = 2
     retrieve_top_k: int = 3
     router: str = "embedding"
@@ -222,9 +238,16 @@ def _is_trivial_query(text: str) -> bool:
 
 
 def _model() -> BaseModel:
-    if _config.use_mock:
-        return MockBaseModel()
-    return OllamaBaseModel(model=_config.ollama_model, host=_config.ollama_host)
+    return build_serving_model(
+        use_mock=_config.use_mock,
+        provider=_config.model_provider,
+        # ollama provider keeps the existing DEQUORUM_OLLAMA_MODEL pin; the openai
+        # provider uses DEQUORUM_MODEL (the tag at the hosted endpoint).
+        model=_config.model or _config.ollama_model,
+        host=_config.ollama_host,
+        base_url=_config.model_base_url,
+        api_key=_config.model_api_key,
+    )
 
 
 def _seed_if_empty() -> None:
