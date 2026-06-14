@@ -30,6 +30,40 @@ Contributors publish signed factual claims under a curated category taxonomy; a 
 
 This is the codebase for the v0.1 MVP, licensed **Apache 2.0**. See [docs/PRODUCT.md](docs/PRODUCT.md) for the product spec and [docs/WHITEPAPER.md](docs/WHITEPAPER.md) for the architectural thesis.
 
+## How it works
+
+**DeQuorum is a trust-and-payment layer that sits *underneath* any AI.** The model writes the answer; DeQuorum supplies the vetted knowledge it answers from, proves which knowledge it used, and pays the people who supplied and verified it. We're not building a better model — the model is a swappable, open-source commodity. The product is the **governance** (deciding what's true enough to ground an answer), the **attribution** (cryptographic proof of which contribution shaped which answer), and the **payout** (splitting revenue by measured value).
+
+Think **Wikipedia + Spotify royalties + a notary, sitting under any chatbot**: people contribute and vote on knowledge, usage is metered and pays them, and every claim is signed and independently verifiable.
+
+The core idea: **don't trust the model — trust the governance and the signed proof.** An LLM will repeat a confident lie ([we measured this](docs/WHITEPAPER.md)); what makes a DeQuorum answer trustworthy is that it's grounded only in peer-approved, highest-voted knowledge, with a citation chain anyone can check.
+
+### The three roles
+
+- **Contributors** submit signed claims and earn a share of every answer their claim grounds, in proportion to how much it actually mattered.
+- **Reviewers / voters** triage and vote claims to LIVE and are paid for the curation; higher-trust voters' votes count more (sybil resistance).
+- **Askers** get answers grounded in vetted knowledge with verifiable sources — and a refusal instead of a hallucination when no qualified knowledge exists.
+
+### The life of one question
+
+1. **Route** to the right domain (or refuse if none qualifies).
+2. **Retrieve** the most-trusted, current, highest-voted contributions.
+3. **Ground** the model's answer in them (treated as data, never as instructions).
+4. **Return** the answer with a signed, verifiable proof chain.
+5. **Meter** which contributions were used, plus a quality signal.
+6. **Settle** the query fee across contributors, reviewers, compute host, operator, and treasury.
+7. **Learn** (later) by distilling a dense domain's knowledge into the model weights — with attribution intact — so the network gradually *owns* its intelligence instead of renting it.
+
+### Building on it — three modes
+
+1. **Use the app** directly.
+2. **Call the protocol** — bring your own app and model, and use DeQuorum to ground answers in vetted knowledge, get the proof chain, and pay contributors. This is how another product straps DeQuorum onto an existing AI layer.
+3. **Run your own instance** and federate with others (Mastodon-style).
+
+> **In one sentence:** DeQuorum is the open, verifiable, pay-as-you're-used knowledge layer any AI can build on — people contribute and vote on the knowledge, every answer proves and pays its sources, and the network gradually comes to own the intelligence instead of renting it from a handful of companies.
+
+For how these findings drive the build (and what's invented vs. integrated), see [docs/architecture/build-direction.md](docs/architecture/build-direction.md).
+
 ## Open source, top to bottom
 
 DeQuorum is open source under Apache 2.0, and the production stack runs on open-license dependencies end-to-end:
