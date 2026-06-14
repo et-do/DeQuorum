@@ -20,6 +20,11 @@ ROLE_USER = "user"
 ROLE_NETWORK = "network"
 _VALID_ROLES = {ROLE_USER, ROLE_NETWORK}
 
+# Per-answer feedback is a thumbs signal: +1 helpful / -1 not. This is the quality
+# ground truth the faithful payout measure reads — an answer's grounding set is on
+# the message, so rating -> message -> contributions (see build-direction.md).
+VALID_FEEDBACK = (-1, 1)
+
 DEFAULT_TITLE = "New chat"
 
 
@@ -41,6 +46,16 @@ class ChatMessage:
     response: dict | None
     created_at: int
     sequence_number: int
+
+
+@dataclass(frozen=True, slots=True)
+class MessageFeedback:
+    message_id: str
+    contributor_id: str
+    rating: int  # -1 or +1
+    comment: str | None
+    created_at: int
+    updated_at: int
 
 
 def _new_id(prefix: str) -> str:
@@ -182,6 +197,66 @@ class ChatStore:
         ).fetchall()
         return [_row_to_message(r) for r in rows]
 
+    def get_message(self, message_id: str) -> ChatMessage | None:
+        row = self._conn.execute(
+            "SELECT message_id, session_id, role, content, response_json, "
+            "created_at, sequence_number "
+            "FROM chat_messages WHERE message_id = %s",
+            (message_id,),
+        ).fetchone()
+        return _row_to_message(row) if row else None
+
+    # --- per-answer feedback (the quality signal for attribution/payout) ---
+
+    def set_feedback(
+        self,
+        message_id: str,
+        contributor_id: str,
+        rating: int,
+        comment: str | None = None,
+    ) -> MessageFeedback:
+        """Record or update a user's rating of a network answer. Upserts so a user
+        can change their mind; `created_at` is preserved across updates."""
+        if rating not in VALID_FEEDBACK:
+            raise ValueError(
+                f"invalid feedback rating {rating!r}; expected one of {VALID_FEEDBACK}"
+            )
+        now = int(time.time())
+        self._conn.execute(
+            "INSERT INTO message_feedback "
+            "(message_id, contributor_id, rating, comment, created_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (message_id, contributor_id) DO UPDATE SET "
+            "rating = EXCLUDED.rating, comment = EXCLUDED.comment, "
+            "updated_at = EXCLUDED.updated_at",
+            (message_id, contributor_id, rating, comment, now, now),
+        )
+        fb = self.get_feedback(message_id, contributor_id)
+        assert fb is not None
+        return fb
+
+    def get_feedback(
+        self, message_id: str, contributor_id: str
+    ) -> MessageFeedback | None:
+        row = self._conn.execute(
+            "SELECT message_id, contributor_id, rating, comment, created_at, "
+            "updated_at FROM message_feedback "
+            "WHERE message_id = %s AND contributor_id = %s",
+            (message_id, contributor_id),
+        ).fetchone()
+        return _row_to_feedback(row) if row else None
+
+    def feedback_summary(self, message_id: str) -> dict:
+        """Aggregate rating for an answer — what the payout layer reads as the
+        quality signal: net = sum of ±1 ratings, count = number of raters."""
+        row = self._conn.execute(
+            "SELECT COALESCE(SUM(rating), 0), COUNT(*) "
+            "FROM message_feedback WHERE message_id = %s",
+            (message_id,),
+        ).fetchone()
+        assert row is not None
+        return {"net": int(row[0]), "count": int(row[1])}
+
     def __iter__(self) -> Iterator[ChatSession]:
         # Convenience: iterate over all sessions (newest-first across all
         # contributors). Useful for fixture inspection.
@@ -213,4 +288,15 @@ def _row_to_message(row: tuple) -> ChatMessage:
         response=response,
         created_at=int(row[5]),
         sequence_number=int(row[6]),
+    )
+
+
+def _row_to_feedback(row: tuple) -> MessageFeedback:
+    return MessageFeedback(
+        message_id=row[0],
+        contributor_id=row[1],
+        rating=int(row[2]),
+        comment=row[3],
+        created_at=int(row[4]),
+        updated_at=int(row[5]),
     )

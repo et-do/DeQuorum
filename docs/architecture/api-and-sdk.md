@@ -36,6 +36,7 @@ The `/v1/*` endpoints are the public surface. Today they're:
 | `GET  /v1/chat/sessions/{id}` | Fetch session + messages | ✅ |
 | `DELETE /v1/chat/sessions/{id}` | Delete a session | ✅ |
 | `PATCH /v1/chat/sessions/{id}` | Rename a session | ✅ |
+| `POST /v1/chat/sessions/{id}/messages/{mid}/feedback` | Rate a network answer (±1) — quality signal for payout | ✅ |
 | `GET  /v1/contributions` | List approved contributions (filterable) | ✅ |
 | `POST /v1/contributions` | Submit a contribution | ✅ |
 | `GET  /v1/contributions/{id}` | Fetch contribution + signature chain | ✅ |

@@ -1071,6 +1071,42 @@ def create_app() -> FastAPI:
         assert session is not None
         return _serialize_session(session)
 
+    @app.post(
+        "/v1/chat/sessions/{session_id}/messages/{message_id}/feedback",
+        tags=["chat"],
+    )
+    def submit_message_feedback(
+        session_id: str = Path(...),
+        message_id: str = Path(...),
+        payload: dict = Body(...),
+        user: AuthenticatedUser = Depends(require_user),
+    ) -> dict:
+        """Rate a network answer (+1 helpful / -1 not). This is the quality signal
+        the payout layer reads: the answer's grounding set is on the message, so a
+        rating attaches to the contributors who shaped it (build-direction.md)."""
+        rating = payload.get("rating")
+        if rating not in (-1, 1):
+            raise HTTPException(400, "rating must be -1 or 1")
+        comment = (payload.get("comment") or "").strip() or None
+        store_ctx, cstore, _ = _owned_session(session_id, user)
+        try:
+            msg = store_ctx.get_message(message_id)
+            if msg is None or msg.session_id != session_id:
+                raise HTTPException(404, "message not found")
+            if msg.role != ROLE_NETWORK:
+                raise HTTPException(400, "feedback is only for network answers")
+            fb = store_ctx.set_feedback(
+                message_id, contributor_id=user.uid, rating=rating, comment=comment
+            )
+        finally:
+            cstore.__exit__(None, None, None)
+        return {
+            "message_id": fb.message_id,
+            "rating": fb.rating,
+            "comment": fb.comment,
+            "updated_at": fb.updated_at,
+        }
+
     @app.post("/v1/chat/sessions/{session_id}/stream", tags=["chat"])
     async def stream_chat_message(
         session_id: str = Path(...),
