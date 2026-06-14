@@ -58,7 +58,7 @@ def _ns(**kw: object) -> argparse.Namespace:
 def test_retrieval_bench_writes_report(tmp_path, monkeypatch) -> None:
     import dequorum.cli as cli
 
-    monkeypatch.setattr(cli, "_grounding_model", lambda args: _EchoSystemModel())
+    monkeypatch.setattr(cli, "_grounding_model", lambda args, **kw: _EchoSystemModel())
     out = tmp_path / "retrieval.md"
     rc = _cmd_retrieval_bench(
         _ns(mock=True, model="", host="", top_k=[1, 3], limit=3, output=str(out))
@@ -73,7 +73,7 @@ def test_retrieval_bench_writes_report(tmp_path, monkeypatch) -> None:
 def test_conflict_bench_writes_vote_gated_row(tmp_path, monkeypatch) -> None:
     import dequorum.cli as cli
 
-    monkeypatch.setattr(cli, "_grounding_model", lambda args: _EchoSystemModel())
+    monkeypatch.setattr(cli, "_grounding_model", lambda args, **kw: _EchoSystemModel())
     out = tmp_path / "conflict.md"
     rc = _cmd_conflict_bench(
         _ns(mock=True, model="", host="", limit=3, output=str(out))
@@ -174,7 +174,7 @@ def test_attribution_truth_flat_is_chance(tmp_path, monkeypatch) -> None:
     import dequorum.cli as cli
     from dequorum.routing.embedder import HashEmbedder
 
-    monkeypatch.setattr(cli, "_grounding_model", lambda args: _EchoSystemModel())
+    monkeypatch.setattr(cli, "_grounding_model", lambda args, **kw: _EchoSystemModel())
     monkeypatch.setattr(cli, "_truth_embedder", lambda args: HashEmbedder(256))
     out = tmp_path / "at.md"
     rc = cli._cmd_attribution_truth(
@@ -194,7 +194,9 @@ def test_attribution_truth_flat_is_chance(tmp_path, monkeypatch) -> None:
     assert rc == 0
     text = out.read_text()
     assert "Attribution faithfulness vs known ground truth" in text
-    assert "flat (baseline)" in text and "Shapley (judge)" in text
+    assert "flat (baseline)" in text and "judge-marginal" in text
+    # Shapley is opt-in (expensive); it must NOT appear unless --shapley is set.
+    assert "Shapley (judge)" not in text
     # flat credit is uniform over 4 contributions -> chance 0.25 on the decisive one,
     # now reported with a 95% CI (e.g. "| flat (baseline) | 0.250 [..] (n=6) | ...").
     assert "| flat (baseline) | 0.250 [" in text
@@ -208,7 +210,7 @@ def test_attribution_truth_hard_uses_false_twin(tmp_path, monkeypatch) -> None:
     import dequorum.cli as cli
     from dequorum.routing.embedder import HashEmbedder
 
-    monkeypatch.setattr(cli, "_grounding_model", lambda args: _EchoSystemModel())
+    monkeypatch.setattr(cli, "_grounding_model", lambda args, **kw: _EchoSystemModel())
     monkeypatch.setattr(cli, "_truth_embedder", lambda args: HashEmbedder(256))
     out = tmp_path / "hard.md"
     rc = cli._cmd_attribution_truth(
@@ -224,12 +226,14 @@ def test_attribution_truth_hard_uses_false_twin(tmp_path, monkeypatch) -> None:
             topics=None,
             seed=0,
             distractors="hard",
+            shapley=True,  # opt-in Shapley path
         )
     )
     assert rc == 0
     text = out.read_text()
     assert "Hard / contested regime" in text
     assert "false twin" in text
+    assert "Shapley (judge)" in text  # --shapley adds the row
 
 
 class _InjectableModel:
@@ -251,7 +255,7 @@ def test_injection_bench_hardening_reduces_obedience(tmp_path, monkeypatch) -> N
     mock obeys plain and resists hardened."""
     import dequorum.cli as cli
 
-    monkeypatch.setattr(cli, "_grounding_model", lambda args: _InjectableModel())
+    monkeypatch.setattr(cli, "_grounding_model", lambda args, **kw: _InjectableModel())
     out = tmp_path / "inj.md"
     rc = cli._cmd_injection_bench(
         _ns(

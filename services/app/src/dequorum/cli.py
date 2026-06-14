@@ -506,6 +506,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="random: unrelated notes (easy/sanity). hard: include the fact's false "
         "twin (contested regime — the real faithfulness test).",
     )
+    atruth.add_argument(
+        "--shapley",
+        action="store_true",
+        help="Also compute the Shapley method (exact over 2^cited subsets — ~16 "
+        "generations/fact; off by default, the leave-one-out methods suffice).",
+    )
     atruth.add_argument("--limit", type=int, default=None, help="First N facts")
     atruth.add_argument("--output", default="docs/benchmarks/attribution_truth.md")
     _add_corpus_args(atruth)
@@ -1878,15 +1884,20 @@ def _cmd_falsehood_bench(args: argparse.Namespace) -> int:
     return 0
 
 
-def _grounding_model(args: argparse.Namespace):
+def _grounding_model(args: argparse.Namespace, num_predict: int = 192):
     """Model for grounded-answer benches — wider num_predict than the judge model
-    since these read a reference and write a full answer."""
+    since these read a reference and write a full answer. Callers that generate many
+    short answers (e.g. attribution-truth's leave-one-out) pass a smaller num_predict
+    to cut cost: only the gold token needs to appear, not a full paragraph."""
     from dequorum.inference.base_model import MockBaseModel, OllamaBaseModel
 
     if args.mock:
         return MockBaseModel()
     return OllamaBaseModel(
-        model=args.model, host=args.host, timeout_seconds=300.0, num_predict=192
+        model=args.model,
+        host=args.host,
+        timeout_seconds=300.0,
+        num_predict=num_predict,
     )
 
 
@@ -2523,11 +2534,18 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
 
     facts = _select_facts(args)
     judge = KeywordRecallJudge()
-    model = _grounding_model(args)
+    # Short generations: each answer only needs to contain the gold token for the
+    # judge, and this command issues many of them per fact (leave-one-out + optional
+    # Shapley), so a small num_predict is the dominant cost lever.
+    model = _grounding_model(args, num_predict=64)
     embedder = _truth_embedder(args)
     rng = _random.Random(getattr(args, "seed", 0))
     m = max(2, args.cited)  # contributions per query: 1 decisive + (m-1) distractors
     persona = "You are a precise assistant. Answer the question from the references."
+    # Shapley is exact over 2^m subsets — ~16 generations/fact at m=4, the bulk of the
+    # cost — so it is opt-in. The leave-one-out methods (embedding/judge-marginal) are
+    # ~m+1 generations and answer the faithfulness question on their own.
+    use_shapley = getattr(args, "shapley", False)
 
     hard = getattr(args, "distractors", "random") == "hard"
     key = generate_signing_key()
@@ -2566,8 +2584,9 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
         "retrieval score",
         "embedding-marginal",
         "judge-marginal",
-        "Shapley (judge)",
     ]
+    if use_shapley:
+        methods.append("Shapley (judge)")
     rank1: dict[str, list[float]] = {mth: [] for mth in methods}
     prec: dict[str, list[float]] = {mth: [] for mth in methods}
 
@@ -2601,15 +2620,6 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
             embedder=embedder,
             score_answer=score_answer,
         )
-        shap = shapley_attribution(
-            query=f.query,
-            persona_prompt=persona,
-            retrieved=retrieved,
-            model=model,
-            score_answer=score_answer,
-            exact_max_n=6,
-            seed=getattr(args, "seed", 0),
-        )
         vectors = {
             "flat (baseline)": [1.0 / len(retrieved)] * len(retrieved),
             "retrieval score": normalize([sc.score for sc in retrieved]),
@@ -2617,8 +2627,18 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
             "judge-marginal": normalize(
                 [max(0.0, c.judge_marginal or 0.0) for c in credits]
             ),
-            "Shapley (judge)": [c.credit_weight for c in shap],
         }
+        if use_shapley:
+            shap = shapley_attribution(
+                query=f.query,
+                persona_prompt=persona,
+                retrieved=retrieved,
+                model=model,
+                score_answer=score_answer,
+                exact_max_n=6,
+                seed=getattr(args, "seed", 0),
+            )
+            vectors["Shapley (judge)"] = [c.credit_weight for c in shap]
         for mth, vec in vectors.items():
             hi = max(vec)
             tied = [k for k in range(len(vec)) if abs(vec[k] - hi) < 1e-12]
