@@ -104,10 +104,13 @@ a documented contract (the `services-roadmap` already calls for extracting
    quality-gates the contributor pool. ✅ **done** (pure/tested)
 6. **Wire settlement end-to-end** (`economics/ledger.py: settle_message`,
    `settlements` table, chat-store persistence) — reads an answer's grounding set +
-   feedback, computes credits, and persists a per-query payout. ✅ **done** (v1
-   credit = equal split; the faithful quality-grounded marginal / routing plugs into
-   the same slot next). Remaining: a **trigger** (batch job or operator endpoint —
-   not the chat hot path) and the faithful-credit swap.
+   feedback, computes credits, and persists a per-query payout. ✅ **done**.
+   `settle_message` takes injectable `credit_weights`; `marginal_credit_weights`
+   computes the **faithful** weights (the §8.6 quality-grounded marginal — weights
+   by the *judge* marginal, not resemblance: 0.89 vs 0.50). Equal-split is the
+   default fallback. Remaining: a **trigger** (batch job or operator endpoint — not
+   the chat hot path) wired with a production `score_answer` quality judge (or
+   routing-by-construction once the training tier lands).
 7. **Extract `attribution`/`ledger` + `retrieval` as documented services** — the
    first concrete protocol-surface step (the `services-roadmap` wants `ledger`
    carved out). *(next)*
