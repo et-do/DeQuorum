@@ -58,6 +58,24 @@ class MessageFeedback:
     updated_at: int
 
 
+@dataclass(frozen=True, slots=True)
+class SettlementRecord:
+    """Persisted payout for one answer (see economics.settlement.Settlement).
+    Stored here keyed by message_id; the orchestration in economics.ledger builds
+    it and passes primitives, so this store stays decoupled from economics."""
+
+    message_id: str
+    session_id: str
+    revenue: float
+    quality_factor: float
+    contributors: dict[str, float]  # contributor_id -> payout
+    reviewers: dict[str, float]
+    host: float
+    operator: float
+    treasury: float
+    created_at: int
+
+
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{secrets.token_hex(8)}"
 
@@ -257,6 +275,61 @@ class ChatStore:
         assert row is not None
         return {"net": int(row[0]), "count": int(row[1])}
 
+    # --- settlement ledger (the payout for an answer) ---
+
+    def record_settlement(
+        self,
+        message_id: str,
+        session_id: str,
+        *,
+        revenue: float,
+        quality_factor: float,
+        contributors: dict[str, float],
+        reviewers: dict[str, float],
+        host: float,
+        operator: float,
+        treasury: float,
+    ) -> SettlementRecord:
+        """Persist (or re-persist) the payout split for an answer. Idempotent per
+        message_id, so re-settling overwrites."""
+        now = int(time.time())
+        self._conn.execute(
+            "INSERT INTO settlements (message_id, session_id, revenue, "
+            "quality_factor, contributors_json, reviewers_json, host, operator, "
+            "treasury, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (message_id) DO UPDATE SET "
+            "session_id = EXCLUDED.session_id, revenue = EXCLUDED.revenue, "
+            "quality_factor = EXCLUDED.quality_factor, "
+            "contributors_json = EXCLUDED.contributors_json, "
+            "reviewers_json = EXCLUDED.reviewers_json, host = EXCLUDED.host, "
+            "operator = EXCLUDED.operator, treasury = EXCLUDED.treasury, "
+            "created_at = EXCLUDED.created_at",
+            (
+                message_id,
+                session_id,
+                revenue,
+                quality_factor,
+                json.dumps(contributors),
+                json.dumps(reviewers),
+                host,
+                operator,
+                treasury,
+                now,
+            ),
+        )
+        rec = self.get_settlement(message_id)
+        assert rec is not None
+        return rec
+
+    def get_settlement(self, message_id: str) -> SettlementRecord | None:
+        row = self._conn.execute(
+            "SELECT message_id, session_id, revenue, quality_factor, "
+            "contributors_json, reviewers_json, host, operator, treasury, "
+            "created_at FROM settlements WHERE message_id = %s",
+            (message_id,),
+        ).fetchone()
+        return _row_to_settlement(row) if row else None
+
     def __iter__(self) -> Iterator[ChatSession]:
         # Convenience: iterate over all sessions (newest-first across all
         # contributors). Useful for fixture inspection.
@@ -299,4 +372,19 @@ def _row_to_feedback(row: tuple) -> MessageFeedback:
         comment=row[3],
         created_at=int(row[4]),
         updated_at=int(row[5]),
+    )
+
+
+def _row_to_settlement(row: tuple) -> SettlementRecord:
+    return SettlementRecord(
+        message_id=row[0],
+        session_id=row[1],
+        revenue=float(row[2]),
+        quality_factor=float(row[3]),
+        contributors=json.loads(row[4]),
+        reviewers=json.loads(row[5]),
+        host=float(row[6]),
+        operator=float(row[7]),
+        treasury=float(row[8]),
+        created_at=int(row[9]),
     )

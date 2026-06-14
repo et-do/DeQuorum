@@ -102,9 +102,12 @@ a documented contract (the `services-roadmap` already calls for extracting
 5. **Settlement** (`economics/settlement.py`) — turn a query's revenue + grounding
    credits + feedback into a per-recipient payout split; conserves revenue,
    quality-gates the contributor pool. ✅ **done** (pure/tested)
-6. **Wire settlement end-to-end** — compute credits from a live answer's grounding
-   set (faithful quality-grounded marginal or routing), read its feedback, persist
-   a `settlement` ledger row per query. *(next)*
+6. **Wire settlement end-to-end** (`economics/ledger.py: settle_message`,
+   `settlements` table, chat-store persistence) — reads an answer's grounding set +
+   feedback, computes credits, and persists a per-query payout. ✅ **done** (v1
+   credit = equal split; the faithful quality-grounded marginal / routing plugs into
+   the same slot next). Remaining: a **trigger** (batch job or operator endpoint —
+   not the chat hot path) and the faithful-credit swap.
 7. **Extract `attribution`/`ledger` + `retrieval` as documented services** — the
    first concrete protocol-surface step (the `services-roadmap` wants `ledger`
    carved out). *(next)*

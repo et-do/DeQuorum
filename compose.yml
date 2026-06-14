@@ -29,7 +29,10 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - db-data:/var/lib/postgresql/data
+      # Postgres 18+ images require the volume at /var/lib/postgresql (data lands in
+      # a major-version subdirectory); the old /var/lib/postgresql/data mount is
+      # rejected. See docker-library/postgres#1259.
+      - db-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
