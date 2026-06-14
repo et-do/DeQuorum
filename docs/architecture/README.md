@@ -4,6 +4,7 @@ Design notes that live longer than a single feature. If you're trying to underst
 
 | Doc | What it covers |
 | --- | -------------- |
+| [build-direction.md](build-direction.md) | Decision record: how the whitepaper §8 findings drive product/protocol design — component changes (no pivot), invent-vs-integrate, protocol seams, platform→protocol sequencing, work plan |
 | [services/db/data-model.md](../../services/db/data-model.md) | Overview of every entity in the system, where each dataclass lives, and what's planned vs in-code today |
 | [services/db/data-model.dbml](../../services/db/data-model.dbml) | Canonical schema in DBML — paste into [dbdiagram.io](https://dbdiagram.io/d) to render the ERD |
 | [contributor-intake.md](contributor-intake.md) | How signup → agreement → credentials → bulk document submission will work as we scale past hand-coded keypairs |

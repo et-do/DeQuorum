@@ -21,7 +21,7 @@ REJECTION_THRESHOLD: Final[int] = -2
 @dataclass(frozen=True, slots=True)
 class ReviewOutcome:
     contribution_id: str
-    tally: int
+    tally: float  # tier-weighted net score (see ContributionStore.vote_tally)
     previous_status: str
     new_status: str
     changed: bool
@@ -82,7 +82,7 @@ class ReviewService:
         )
 
     @staticmethod
-    def _status_for_tally(tally: int, current: str) -> str:
+    def _status_for_tally(tally: float, current: str) -> str:
         if tally >= APPROVAL_THRESHOLD:
             return STATUS_APPROVED
         if tally <= REJECTION_THRESHOLD:

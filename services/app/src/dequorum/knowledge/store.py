@@ -305,13 +305,24 @@ class ContributionStore:
         ).fetchall()
         return [_row_to_vote(r) for r in rows]
 
-    def vote_tally(self, contribution_id: str) -> int:
-        row = self._conn.execute(
-            "SELECT COALESCE(SUM(score), 0) FROM votes WHERE contribution_id = %s",
+    def vote_tally(self, contribution_id: str) -> float:
+        """Tier-weighted net vote score for a contribution.
+
+        Each vote is weighted by the caller's tier (the sybil-resistance lever from
+        whitepaper §8.8): higher-tier votes count more, anonymous/email-only votes
+        weigh 0. Unregistered voters (no contributor row) default to a basic counted
+        vote, so behaviour is unchanged for them. The weighting policy lives in
+        `review.tally`; the LEFT JOIN supplies each voter's tier.
+        """
+        from dequorum.review.tally import tier_weighted_tally
+
+        rows = self._conn.execute(
+            "SELECT v.score, c.tier FROM votes v "
+            "LEFT JOIN contributors c ON v.voter_id = c.contributor_id "
+            "WHERE v.contribution_id = %s",
             (contribution_id,),
-        ).fetchone()
-        assert row is not None
-        return int(row[0])
+        ).fetchall()
+        return tier_weighted_tally((r[1], int(r[0])) for r in rows)
 
     # --- iteration ---
 
