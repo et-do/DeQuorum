@@ -10,7 +10,11 @@ it can be re-run with real numbers as they land.
 from __future__ import annotations
 
 from dequorum.economics.costmodel import CostModel, RevenueSplit
-from dequorum.economics.ledger import marginal_credit_weights, settle_message
+from dequorum.economics.ledger import (
+    marginal_credit_weights,
+    settle_message,
+    settle_message_faithful,
+)
 from dequorum.economics.settlement import (
     Settlement,
     quality_factor_from_feedback,
@@ -24,5 +28,6 @@ __all__ = [
     "marginal_credit_weights",
     "quality_factor_from_feedback",
     "settle_message",
+    "settle_message_faithful",
     "settle_query",
 ]

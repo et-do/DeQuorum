@@ -111,9 +111,15 @@ a documented contract (the `services-roadmap` already calls for extracting
    default fallback. Remaining: a **trigger** (batch job or operator endpoint — not
    the chat hot path) wired with a production `score_answer` quality judge (or
    routing-by-construction once the training tier lands).
-7. **Extract `attribution`/`ledger` + `retrieval` as documented services** — the
-   first concrete protocol-surface step (the `services-roadmap` wants `ledger`
-   carved out). *(next)*
+7. **Extract `attribution`/`ledger` + `retrieval` as documented services**
+   (`dequorum.services`: `LedgerService`, `GroundingService`) — the first concrete
+   protocol-surface step. ✅ **done**: in-process facades with a documented contract
+   ([protocol-services.md](protocol-services.md)) — `LedgerService` is the
+   services-roadmap's `ledger` audit boundary (settle / settle_faithful / get /
+   journal); `GroundingService` is vote-gated retrieval behind a stable, impl-agnostic
+   seam. Lifting either into a standalone service is wrapping the facade in transport.
+   Remaining: route the reference `web` app through these facades, then the standalone
+   `ledger` deploy + worker/Cloud Tasks settlement trigger (per `services-roadmap`).
 
 ## Deferred (intentionally)
 

@@ -6,7 +6,11 @@ import pytest
 
 from dequorum.chat.store import ROLE_NETWORK, ROLE_USER, ChatStore
 from dequorum.core.errors import CompositionError
-from dequorum.economics.ledger import marginal_credit_weights, settle_message
+from dequorum.economics.ledger import (
+    marginal_credit_weights,
+    settle_message,
+    settle_message_faithful,
+)
 from dequorum.eval import KeywordRecallJudge
 from dequorum.knowledge.contribution import Contribution
 from dequorum.knowledge.store import ContributionStore
@@ -146,6 +150,74 @@ def test_marginal_credit_weights_favor_the_quality_carrying_contribution() -> No
     assert _approx(sum(weights.values()), 1.0)
     assert weights[relevant.contribution_id] > weights[irrelevant.contribution_id]
     assert weights[relevant.contribution_id] > 0.9  # carries essentially all quality
+
+
+class _KeywordJudgeModel:
+    """Stand-in judge LLM for the reference-free LLMJudge: replies '10' when the
+    graded answer mentions the keyword, '0' otherwise — so the contribution that
+    carries the keyword shows a positive *quality* marginal."""
+
+    def __init__(self, keyword: str) -> None:
+        self._kw = keyword
+
+    def complete(self, system: str, user: str) -> str:
+        # Grade the answer only — the question (which also names the keyword) sits
+        # before the "Answer:" section of the LLMJudge prompt.
+        answer = user.lower().split("answer:", 1)[-1]
+        return "10" if self._kw in answer else "0"
+
+    def stream(self, system: str, user: str) -> Iterator[str]:
+        yield self.complete(system, user)
+
+
+def test_settle_message_faithful_pays_the_quality_carrier_end_to_end() -> None:
+    """The production trigger: rebuild the grounding set, judge each ablation
+    reference-free, and settle by the faithful weights — the quality-carrying
+    contribution earns the contributor pool; the irrelevant one earns ~0."""
+    query = "explain quasar entanglement spectroscopy"
+    relevant = Contribution.create(
+        contributor_id="alice",
+        text="quasar entanglement spectroscopy reveals photon correlations",
+        citations=(),
+        signing_key=b"k",
+    )
+    irrelevant = Contribution.create(
+        contributor_id="bob",
+        text="sourdough fermentation needs flour water salt time",
+        citations=(),
+        signing_key=b"k",
+    )
+    cstore = ContributionStore()
+    cstore.add(relevant)
+    cstore.add(irrelevant)
+    chat = ChatStore()
+    sess = chat.create_session("dq:user-1", "t")
+    chat.add_message(sess.session_id, ROLE_USER, query)
+    msg = chat.add_message(
+        sess.session_id,
+        ROLE_NETWORK,
+        "quasar entanglement spectroscopy reveals photon correlations",
+        response={
+            "query": query,
+            "retrieved_contribution_ids": [
+                relevant.contribution_id,
+                irrelevant.contribution_id,
+            ],
+        },
+    )
+    settlement, record = settle_message_faithful(
+        chat_store=chat,
+        contribution_store=cstore,
+        message_id=msg.message_id,
+        revenue=1.0,
+        model=_RelevanceModel(),
+        embedder=HashEmbedder(512),
+        judge_model=_KeywordJudgeModel("quasar"),
+    )
+    assert _approx(settlement.contributors["alice"], 0.40)  # carries all the quality
+    assert settlement.contributors.get("bob", 0.0) < 1e-9  # irrelevant -> ~0
+    assert _approx(settlement.total(), 1.0)
+    assert record.contributors["alice"] > 0.0  # persisted
 
 
 def test_settle_message_rejects_non_network_message() -> None:

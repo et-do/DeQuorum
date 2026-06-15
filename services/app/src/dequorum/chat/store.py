@@ -330,6 +330,18 @@ class ChatStore:
         ).fetchone()
         return _row_to_settlement(row) if row else None
 
+    def list_settlements(self, session_id: str) -> list[SettlementRecord]:
+        """The payout journal for a session, oldest-first (uses
+        idx_settlements_session). The read side of the audit boundary."""
+        rows = self._conn.execute(
+            "SELECT message_id, session_id, revenue, quality_factor, "
+            "contributors_json, reviewers_json, host, operator, treasury, "
+            "created_at FROM settlements WHERE session_id = %s "
+            "ORDER BY created_at, message_id",
+            (session_id,),
+        ).fetchall()
+        return [_row_to_settlement(r) for r in rows]
+
     def __iter__(self) -> Iterator[ChatSession]:
         # Convenience: iterate over all sessions (newest-first across all
         # contributors). Useful for fixture inspection.

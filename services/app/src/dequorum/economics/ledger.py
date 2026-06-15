@@ -173,3 +173,64 @@ def marginal_credit_weights(
         equal = 1.0 / len(credits)
         return {c.contribution_id: equal for c in credits}
     return {c.contribution_id: r / total for c, r in zip(credits, raw, strict=True)}
+
+
+def settle_message_faithful(
+    *,
+    chat_store: ChatStore,
+    contribution_store: ContributionStore,
+    message_id: str,
+    revenue: float,
+    model: BaseModel,
+    embedder: Embedder,
+    judge_model: BaseModel | None = None,
+    split: RevenueSplit | None = None,
+) -> tuple[Settlement, SettlementRecord]:
+    """Settle an answer with the *faithful* (quality-grounded) credit, end-to-end —
+    the production settlement trigger (build-direction.md item 6).
+
+    Rebuilds the answer's grounding set from the message, scores each leave-one-out
+    ablation with a **reference-free** `LLMJudge` (production has no gold — the judge
+    grades the answer's correctness/completeness for the query directly), turns the
+    quality marginals into `credit_weights`, and delegates to `settle_message`.
+    `judge_model` defaults to the serving `model`. With no grounding set (or an
+    unrecoverable query) it falls back to the equal-split path.
+
+    This is leave-one-out — (k+1) generations + judge calls — so call it off the
+    chat hot path (a batch job or an operator-triggered settle), not inline."""
+    from dequorum.eval import LLMJudge
+
+    msg = chat_store.get_message(message_id)
+    if msg is None:
+        raise CompositionError(f"unknown message: {message_id!r}")
+    if msg.role != ROLE_NETWORK:
+        raise CompositionError("only network answers can be settled")
+
+    response = msg.response or {}
+    query = str(response.get("query") or "")
+    grounding_ids = list(response.get("retrieved_contribution_ids") or [])
+    contributions = [
+        c
+        for c in (contribution_store.get(cid) for cid in grounding_ids)
+        if c is not None
+    ]
+
+    credit_weights: dict[str, float] | None = None
+    if query and contributions:
+        judge = LLMJudge(judge_model or model)
+        credit_weights = marginal_credit_weights(
+            query=query,
+            contributions=contributions,
+            model=model,
+            embedder=embedder,
+            score_answer=lambda ans: judge.score(query=query, answer=ans, reference=()),
+        )
+
+    return settle_message(
+        chat_store=chat_store,
+        contribution_store=contribution_store,
+        message_id=message_id,
+        revenue=revenue,
+        split=split,
+        credit_weights=credit_weights,
+    )
