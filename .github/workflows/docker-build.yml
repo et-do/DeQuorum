@@ -27,7 +27,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # The default GitHub-hosted runner has ~14 GB of free disk. Building
       # 7 service images that collectively pull torch + nvidia wheels +
