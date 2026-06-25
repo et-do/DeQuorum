@@ -18,13 +18,13 @@ classifiers = [
 dependencies = [
     # Web stack — JSON-only API. UI lives in services/frontend (React),
     # so no Jinja templates or form-data parsing in this service.
-    "fastapi>=0.115",
+    "fastapi>=0.138.1",
     "uvicorn[standard]>=0.49.0",
     "pydantic>=2.12",
-    "pydantic-settings>=2.13",
+    "pydantic-settings>=2.14.2",
     # Database
     "psycopg[binary,pool]>=3.3.4",
-    "alembic>=1.13",
+    "alembic>=1.18.5",
     # Ed25519 signing/verification for the contribution proof chain. Public-key
     # signatures are what make attribution verifiable without trusting the
     # operator — load-bearing, so declared directly rather than relied on
@@ -35,12 +35,12 @@ dependencies = [
     # production).
     "firebase-admin>=6.5",
     # Embeddings (CPU-only torch via [tool.uv.sources] below — saves ~3 GB)
-    "sentence-transformers>=5.0",
+    "sentence-transformers>=5.6.0",
     # Floor kept low on purpose: a high floor forces pip to upgrade numpy
     # mid-session on hosts that ship an older 2.x (e.g. Colab), which breaks
     # the running kernel (numpy C-extension vs Python mismatch). Nothing here
     # needs >=2.4.
-    "numpy>=1.26",
+    "numpy>=2.5.0",
 ]
 
 # Optional extras. Install any combination with
@@ -69,7 +69,7 @@ experimental = [
     # Category theory and compositional diagrams (DisCoPy)
     "discopy>=1.2",
     # Scientific computing
-    "scipy>=1.15",
+    "scipy>=1.18.0",
     # RDF/OWL knowledge graph representation (semantic triple stores for Knowledge Crystal nodes)
     "rdflib>=7.1",
     # SPARQL client for querying Wikidata, DBpedia, and other open knowledge graph endpoints
@@ -79,7 +79,7 @@ experimental = [
     # SMT solver for formal Proof-of-Correctness and constraint satisfaction
     "z3-solver>=4.13",
     # Visualization: graph traversals, VSA vector spaces, composition chains
-    "matplotlib>=3.10",
+    "matplotlib>=3.11.0",
     # Lightweight parser for building formal grammars/DSLs for composition query languages
     "lark>=1.2",
 ]
@@ -89,14 +89,14 @@ ner = [
     "spacy>=3.7",
 ]
 dev = [
-    "pytest>=9.0",
+    "pytest>=9.1.1",
     "pytest-asyncio>=1.0",
     "pytest-benchmark>=5.1",
     "pytest-cov>=6.0",
     "pytest-xdist>=3.5",
     # Property-based testing: verify mathematical invariants of novel architectures
-    "hypothesis>=6.155.2",
-    "ruff>=0.15.17",
+    "hypothesis>=6.155.7",
+    "ruff>=0.15.20",
     "mypy>=1.20",
     "pre-commit>=4.0",
 ]
