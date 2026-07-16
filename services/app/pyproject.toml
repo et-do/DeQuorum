@@ -63,6 +63,11 @@ distill = [
     "peft>=0.19",
     "accelerate>=1.14.0",
 ]
+# Cloud Tasks queue adapter for async settlement (worker/queue.py). Optional so the
+# default inline queue carries no GCP dependency; install in the deployed worker.
+cloudtasks = [
+    "google-cloud-tasks>=2.16",
+]
 experimental = [
     # Symbolic math for deterministic/algebraic reasoning
     "sympy>=1.13",
