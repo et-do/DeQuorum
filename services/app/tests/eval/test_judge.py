@@ -3,8 +3,38 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from dequorum.benchmark.questions import SEED_QUESTIONS
-from dequorum.eval import KeywordRecallJudge, LLMJudge, gold_for
+from dequorum.eval import CoverageJudge, KeywordRecallJudge, LLMJudge, gold_for
 from dequorum.eval.gold import SEEDED_GOLD
+
+
+def test_coverage_is_blind_to_truth() -> None:
+    """The crux of the head-to-head (whitepaper §8.6): the coverage/informativeness
+    objective scores a true answer and its false twin equally, because both are
+    equally on-topic — so it cannot credit the decisive contribution. Recall of the
+    true gold (KeywordRecallJudge) can. This is why the *objective*, not the
+    machinery, is what makes payouts fair."""
+    coverage = CoverageJudge()
+    recall = KeywordRecallJudge()
+    query = "service listens port"
+    true_answer = "the service listens on port 8080"
+    false_twin = "the service listens on port 9090"  # same shape, wrong value
+    gold = ("8080",)
+
+    # Coverage cannot tell them apart — both fully cover the query's terms.
+    assert coverage.score(query=query, answer=true_answer) == coverage.score(
+        query=query, answer=false_twin
+    )
+    assert coverage.score(query=query, answer=true_answer) == 1.0
+    # Recall of the true gold does distinguish them.
+    assert recall.score(query=query, answer=true_answer, reference=gold) == 1.0
+    assert recall.score(query=query, answer=false_twin, reference=gold) == 0.0
+
+
+def test_coverage_rewards_on_topic_completeness() -> None:
+    coverage = CoverageJudge()
+    query = "explain quic over udp transport"
+    assert coverage.score(query=query, answer="quic runs over udp transport") > 0.6
+    assert coverage.score(query=query, answer="unrelated sourdough recipe") == 0.0
 
 
 def test_keyword_recall_full_partial_none() -> None:

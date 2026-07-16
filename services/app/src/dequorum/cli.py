@@ -2528,12 +2528,17 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
     from dequorum.attribution.shapley import shapley_attribution
     from dequorum.benchmark.stats import ci_str
     from dequorum.core.crypto import generate_signing_key
-    from dequorum.eval import KeywordRecallJudge
+    from dequorum.eval import CoverageJudge, KeywordRecallJudge
     from dequorum.knowledge.contribution import Contribution
     from dequorum.retrieval.bm25 import BM25Index, ScoredContribution
 
     facts = _select_facts(args)
+    # Two objectives, same leave-one-out machinery, to isolate what the objective
+    # buys: `judge` scores recall of the TRUE gold (reliance/quality — ours);
+    # `coverage` scores reference-free topical coverage (informativeness — the
+    # Ye & Yoganarasimhan 2025 objective), truth-agnostic. See whitepaper §8.6.
     judge = KeywordRecallJudge()
+    coverage = CoverageJudge()
     # Short generations: each answer only needs to contain the gold token for the
     # judge, and this command issues many of them per fact (leave-one-out + optional
     # Shapley), so a small num_predict is the dominant cost lever.
@@ -2579,14 +2584,21 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
 
         return score
 
+    def coverage_scorer(query: str):
+        def score(ans: str) -> float:
+            return coverage.score(query=query, answer=ans)
+
+        return score
+
     methods = [
         "flat (baseline)",
         "retrieval score",
-        "embedding-marginal",
-        "judge-marginal",
+        "resemblance (embedding marginal)",
+        "coverage (informativeness marginal)",
+        "reliance (quality marginal)",
     ]
     if use_shapley:
-        methods.append("Shapley (judge)")
+        methods.append("Shapley (quality)")
     rank1: dict[str, list[float]] = {mth: [] for mth in methods}
     prec: dict[str, list[float]] = {mth: [] for mth in methods}
 
@@ -2620,11 +2632,26 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
             embedder=embedder,
             score_answer=score_answer,
         )
+        # Same leave-one-out ablation, scored by the coverage (informativeness)
+        # objective instead of quality. The model is temperature-0, so the ablated
+        # answers are identical across the two calls — only the value function
+        # differs, which is exactly the variable we want to isolate.
+        cov_credits = measure_attribution(
+            query=f.query,
+            persona_prompt=persona,
+            retrieved=retrieved,
+            model=model,
+            embedder=embedder,
+            score_answer=coverage_scorer(f.query),
+        )
         vectors = {
             "flat (baseline)": [1.0 / len(retrieved)] * len(retrieved),
             "retrieval score": normalize([sc.score for sc in retrieved]),
-            "embedding-marginal": [c.credit_weight for c in credits],
-            "judge-marginal": normalize(
+            "resemblance (embedding marginal)": [c.credit_weight for c in credits],
+            "coverage (informativeness marginal)": normalize(
+                [max(0.0, c.judge_marginal or 0.0) for c in cov_credits]
+            ),
+            "reliance (quality marginal)": normalize(
                 [max(0.0, c.judge_marginal or 0.0) for c in credits]
             ),
         }
@@ -2638,7 +2665,7 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
                 exact_max_n=6,
                 seed=getattr(args, "seed", 0),
             )
-            vectors["Shapley (judge)"] = [c.credit_weight for c in shap]
+            vectors["Shapley (quality)"] = [c.credit_weight for c in shap]
         for mth, vec in vectors.items():
             hi = max(vec)
             tied = [k for k in range(len(vec)) if abs(vec[k] - hi) < 1e-12]
@@ -2682,6 +2709,14 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
         "containing its gold). We measure how well each credit method recovers it: "
         "**rank-1** is how often the decisive contribution gets the most credit; "
         f"**precision** is the share of credit placed on it (flat baseline = {1.0 / m:.2f}).",
+        "",
+        "The three marginal methods share one leave-one-out machinery and differ only "
+        "in the **objective** the ablation is scored against — the variable this "
+        "experiment isolates: *resemblance* (embedding similarity to the removed "
+        "note), *coverage* (reference-free topical informativeness — the "
+        "Ye & Yoganarasimhan 2025 payout objective), and *reliance* (recall of the "
+        "true gold — ours). Only reliance is truth-sensitive; resemblance and coverage "
+        "are both satisfied equally by a fact and its fluent false twin.",
         "",
         "| method | rank-1 accuracy (95% CI) | mean credit on decisive (95% CI) |",
         "| --- | ---: | ---: |",

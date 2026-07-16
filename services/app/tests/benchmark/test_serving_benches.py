@@ -194,9 +194,11 @@ def test_attribution_truth_flat_is_chance(tmp_path, monkeypatch) -> None:
     assert rc == 0
     text = out.read_text()
     assert "Attribution faithfulness vs known ground truth" in text
-    assert "flat (baseline)" in text and "judge-marginal" in text
+    assert "flat (baseline)" in text and "reliance (quality marginal)" in text
+    # The informativeness (coverage) objective baseline runs alongside reliance.
+    assert "coverage (informativeness marginal)" in text
     # Shapley is opt-in (expensive); it must NOT appear unless --shapley is set.
-    assert "Shapley (judge)" not in text
+    assert "Shapley (quality)" not in text
     # flat credit is uniform over 4 contributions -> chance 0.25 on the decisive one,
     # now reported with a 95% CI (e.g. "| flat (baseline) | 0.250 [..] (n=6) | ...").
     assert "| flat (baseline) | 0.250 [" in text
@@ -233,7 +235,7 @@ def test_attribution_truth_hard_uses_false_twin(tmp_path, monkeypatch) -> None:
     text = out.read_text()
     assert "Hard / contested regime" in text
     assert "false twin" in text
-    assert "Shapley (judge)" in text  # --shapley adds the row
+    assert "Shapley (quality)" in text  # --shapley adds the row
 
 
 class _InjectableModel:

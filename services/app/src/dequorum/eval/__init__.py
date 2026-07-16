@@ -9,10 +9,16 @@ comparison (whitepaper Claim 2) into numbers.
 from __future__ import annotations
 
 from dequorum.eval.gold import SEEDED_GOLD, GoldQuestion, gold_for, gold_questions
-from dequorum.eval.judge import Judge, KeywordRecallJudge, LLMJudge
+from dequorum.eval.judge import (
+    CoverageJudge,
+    Judge,
+    KeywordRecallJudge,
+    LLMJudge,
+)
 
 __all__ = [
     "SEEDED_GOLD",
+    "CoverageJudge",
     "GoldQuestion",
     "Judge",
     "KeywordRecallJudge",

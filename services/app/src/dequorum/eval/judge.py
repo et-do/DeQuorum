@@ -44,6 +44,30 @@ class KeywordRecallJudge:
 
 
 @dataclass(frozen=True, slots=True)
+class CoverageJudge:
+    """Reference-free *informativeness/coverage*: how completely the answer addresses
+    the query's terms, ignorant of factual correctness.
+
+    This stands in for the information-coverage value function used by the nearest
+    Shapley-payout prior art (Ye & Yoganarasimhan, *Fair Document Valuation in LLM
+    Summaries via Shapley Values*, 2025). The point is the objective, not the grader:
+    a fluent, on-topic answer scores high whether or not it is true — so coverage
+    cannot distinguish a true contribution from its near-identical false twin, which
+    is exactly the contested regime where payout fairness bites (whitepaper §8.6).
+    Contrast `KeywordRecallJudge` (recall of the *true* gold), which can.
+    """
+
+    def score(self, *, query: str, answer: str, reference: Sequence[str] = ()) -> float:
+        # reference is accepted for Judge-protocol compatibility but ignored: coverage
+        # is truth-agnostic by construction.
+        q_terms = {t for t in _norm(query).split() if len(t) > 2}
+        if not q_terms:
+            return 0.0
+        haystack = set(_norm(answer).split())
+        return sum(1 for t in q_terms if t in haystack) / len(q_terms)
+
+
+@dataclass(frozen=True, slots=True)
 class LLMJudge:
     """LLM-as-judge: grade correctness + completeness on a 0-10 scale."""
 
