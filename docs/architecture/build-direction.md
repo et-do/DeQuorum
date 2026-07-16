@@ -115,7 +115,7 @@ a documented contract (the `services-roadmap` already calls for extracting
    (`dequorum.services`: `LedgerService`, `GroundingService`) — the first concrete
    protocol-surface step. ✅ **done**: in-process facades with a documented contract
    ([protocol-services.md](protocol-services.md)) — `LedgerService` is the
-   services-roadmap's `ledger` audit boundary (settle / settle_faithful / get /
+   services-roadmap's `ledger` audit boundary (settle / settle_reliance / get /
    journal); `GroundingService` is vote-gated retrieval behind a stable, impl-agnostic
    seam. Lifting either into a standalone service is wrapping the facade in transport.
 8. **Wire the reference app + worker through the services** (`web` chat grounds via

@@ -24,7 +24,7 @@ ledger.settle(message_id, revenue=1.0)
 ledger.settle(message_id, revenue=1.0, credit_weights={cid: 0.75, other: 0.25})
 
 # settle with the faithful, quality-grounded marginal (§8.6) — off the hot path
-ledger.settle_faithful(message_id, revenue=1.0, model=model, embedder=embedder)
+ledger.settle_reliance(message_id, revenue=1.0, model=model, embedder=embedder)
 
 # read the audit boundary
 ledger.get(message_id)        # the payout for one answer, or None
@@ -34,7 +34,7 @@ ledger.journal(session_id)    # the session's payout journal, oldest-first
 | Method | Contract |
 | --- | --- |
 | `settle(message_id, revenue, *, split=None, credit_weights=None)` | Settle + persist; idempotent per message. `credit_weights` is the faithful-credit slot; omit for equal split. Returns `Settlement`. |
-| `settle_faithful(message_id, revenue, *, model, embedder, judge_model=None, split=None)` | Computes the quality-grounded marginal credit via a reference-free judge, then settles. `(k+1)` generations + judge calls — batch / operator-triggered, not inline. |
+| `settle_reliance(message_id, revenue, *, model, embedder, judge_model=None, split=None)` | Computes the quality-grounded marginal credit via a reference-free judge, then settles. `(k+1)` generations + judge calls — batch / operator-triggered, not inline. |
 | `get(message_id)` | The persisted `SettlementRecord`, or `None`. |
 | `journal(session_id)` | The session's payout journal. |
 
@@ -73,7 +73,7 @@ runs on the chat request. It's deferred work (`dequorum.worker`):
 ```
 operator/cron ──POST /v1/settlements/{mid}──▶ SettlementQueue
                                                  │
-              inline (dev)  ───────────────▶ _process_settlement_job ─▶ LedgerService.settle_faithful ─▶ settlements
+              inline (dev)  ───────────────▶ _process_settlement_job ─▶ LedgerService.settle_reliance ─▶ settlements
               cloudtasks (prod) ─▶ Cloud Tasks ─▶ POST /v1/worker/settle ─▶ (same) ──────────────────────────┘
 ```
 
