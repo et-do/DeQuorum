@@ -65,12 +65,36 @@ grounding.invalidate(cat)   # after a governance status change
 | `ground(query, *, category_id, top_k=3)` | Approved grounding set, best-first; empty when nothing approved matches. |
 | `invalidate(category_id=None)` | Drop cached indexes after a status change (all categories when `None`). |
 
+## Settlement flow: trigger → queue → worker → journal
+
+Faithful settlement is expensive (`(k+1)` generations + judge calls), so it never
+runs on the chat request. It's deferred work (`dequorum.worker`):
+
+```
+operator/cron ──POST /v1/settlements/{mid}──▶ SettlementQueue
+                                                 │
+              inline (dev)  ───────────────▶ _process_settlement_job ─▶ LedgerService.settle_faithful ─▶ settlements
+              cloudtasks (prod) ─▶ Cloud Tasks ─▶ POST /v1/worker/settle ─▶ (same) ──────────────────────────┘
+```
+
+- **`SettlementJob`** `{message_id, revenue}` — the JSON-round-trippable unit.
+- **`SettlementQueue`** — `InlineSettlementQueue` (synchronous, dev/test default) or
+  `CloudTasksSettlementQueue` (pushes an HTTP task to the worker endpoint; needs the
+  `cloudtasks` extra). Selected by `DEQUORUM_SETTLEMENT_QUEUE` (`inline` | `cloudtasks`).
+- **Endpoints** (operator-only — `X-Operator-Key`, 503 until `DEQUORUM_OPERATOR_API_KEY`
+  is set): `POST /v1/settlements/{mid}` triggers, `POST /v1/worker/settle` is the Cloud
+  Tasks delivery target, `GET /v1/settlements/{mid}` reads the journal.
+
+This is the services-roadmap's `worker` + `ledger` carve-out: the worker endpoint is
+the seam where a standalone `ledger`/`worker` service detaches from `app`.
+
 ## How an external provider integrates
 
 1. Submit / serve contributions through `knowledge` + `review` (governance).
-2. **Ground** answers through `GroundingService` (vote-gated).
+2. **Ground** answers through `GroundingService` (vote-gated). The reference `web`
+   app's chat stream already grounds through this facade.
 3. Honor the `core` proof chain (`[sc.contribution.signature ...]`).
-4. **Settle** through `LedgerService` (credit + payout).
+4. **Settle** through `LedgerService` / the settlement endpoints (credit + payout).
 
 The base model and UI are theirs. See [build-direction.md](build-direction.md) for
 why the product is this layer, not the model.

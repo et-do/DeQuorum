@@ -47,6 +47,9 @@ The `/v1/*` endpoints are the public surface. Today they're:
 | `GET  /v1/contributors/{id}` | Contributor profile + their contributions | ✅ |
 | `GET  /v1/categories` | The full taxonomy tree | ✅ |
 | `GET  /v1/lineages/{id}` | One claim's version history | ✅ |
+| `POST /v1/settlements/{mid}` | **Operator:** trigger faithful settlement of an answer (enqueues off-hot-path) | ✅ |
+| `GET  /v1/settlements/{mid}` | **Operator:** read an answer's persisted payout (audit boundary) | ✅ |
+| `POST /v1/worker/settle` | **Operator/worker:** process one settlement job (Cloud Tasks delivery target) | ✅ |
 
 The `/v1` prefix is the stability contract. Any breaking change moves to `/v2`; the old surface stays alive for a deprecation window so SDKs don't break their consumers overnight.
 
@@ -58,6 +61,13 @@ Two token classes are planned:
 
 - **End-user tokens.** Bound to an authenticated contributor identity. Used for chat, voting, submitting.
 - **Service tokens.** Bound to an integrator app. Used for backend-to-backend traffic (e.g., a bot that asks questions on behalf of users). Service tokens carry the *integrator's* identity, not the end user's; chat-session ownership is recorded against the integrator's contributor id.
+
+The **settlement / worker endpoints** are a separate, operator-only plane: they
+carry `X-Operator-Key: <DEQUORUM_OPERATOR_API_KEY>` (not a user token) and are
+disabled (503) until that key is configured, so the money path can never be
+triggered by an end-user token. In production Cloud Tasks forwards the key on each
+delivery; OIDC verification is the eventual upgrade. See
+[protocol-services.md](protocol-services.md) for the settlement flow.
 
 Rate limits, billing, and per-token usage attribution all key off the token. A signed answer's proof chain includes the operator's signature, which in the SDK case is the operator of the DeQuorum instance the SDK is calling — not the SDK consumer.
 

@@ -118,8 +118,14 @@ a documented contract (the `services-roadmap` already calls for extracting
    services-roadmap's `ledger` audit boundary (settle / settle_faithful / get /
    journal); `GroundingService` is vote-gated retrieval behind a stable, impl-agnostic
    seam. Lifting either into a standalone service is wrapping the facade in transport.
-   Remaining: route the reference `web` app through these facades, then the standalone
-   `ledger` deploy + worker/Cloud Tasks settlement trigger (per `services-roadmap`).
+8. **Wire the reference app + worker through the services** (`web` chat grounds via
+   `GroundingService`; `dequorum.worker` + operator-guarded settlement endpoints).
+   ✅ **done**: faithful settlement is deferred work — `POST /v1/settlements/{mid}`
+   enqueues via a `SettlementQueue` (`inline` dev default / `cloudtasks` prod), the
+   worker endpoint is the Cloud Tasks delivery target, `GET` reads the journal. All
+   operator-gated (`X-Operator-Key`, disabled until configured). Remaining: stand up
+   the standalone `ledger`/`worker` deploy + Cloud Tasks queue in GCP, and a real
+   per-query revenue figure (currently a configured placeholder).
 
 ## Deferred (intentionally)
 
