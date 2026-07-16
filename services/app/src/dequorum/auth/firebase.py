@@ -15,6 +15,7 @@ that need an identity declare it via `Depends(require_user)`.
 from __future__ import annotations
 
 import os
+import secrets
 from dataclasses import dataclass
 
 from fastapi import Header, HTTPException
@@ -95,3 +96,19 @@ def require_user(
         return verify_token(parts[1])
     except InvalidTokenError as exc:
         raise HTTPException(401, f"invalid token: {exc}") from exc
+
+
+def require_operator(
+    x_operator_key: str | None = Header(default=None, alias="X-Operator-Key"),
+) -> None:
+    """FastAPI dependency guarding operator/worker endpoints (settlement triggers,
+    the Cloud Tasks worker target) with a shared key in `DEQUORUM_OPERATOR_API_KEY`.
+
+    Disabled by default: with no key configured the endpoints 503, so settlement
+    can never be triggered by accident in dev. Production sets the key and the
+    Cloud Tasks queue forwards it. (OIDC verification is the eventual upgrade.)"""
+    expected = os.environ.get("DEQUORUM_OPERATOR_API_KEY", "")
+    if not expected:
+        raise HTTPException(503, "operator endpoints are disabled (no operator key)")
+    if not x_operator_key or not secrets.compare_digest(x_operator_key, expected):
+        raise HTTPException(401, "invalid or missing operator key")

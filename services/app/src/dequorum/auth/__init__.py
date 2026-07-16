@@ -4,6 +4,7 @@ from dequorum.auth.firebase import (
     AuthenticatedUser,
     InvalidTokenError,
     init_firebase,
+    require_operator,
     require_user,
     verify_token,
 )
@@ -12,6 +13,7 @@ __all__ = [
     "AuthenticatedUser",
     "InvalidTokenError",
     "init_firebase",
+    "require_operator",
     "require_user",
     "verify_token",
 ]
