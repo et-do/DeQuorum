@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           # Match the frontend image's base (services/frontend/Dockerfile,
           # node:26-alpine) so CI tests the runtime we actually ship.
