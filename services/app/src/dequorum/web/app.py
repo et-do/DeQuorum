@@ -23,7 +23,12 @@ from dataclasses import asdict, dataclass, field
 from fastapi import Body, Depends, FastAPI, HTTPException, Path, Query
 from fastapi.responses import Response, StreamingResponse
 
-from dequorum.auth import AuthenticatedUser, init_firebase, require_user
+from dequorum.auth import (
+    AuthenticatedUser,
+    init_firebase,
+    require_operator,
+    require_user,
+)
 from dequorum.chat.store import DEFAULT_TITLE, ROLE_NETWORK, ROLE_USER
 from dequorum.comments.comment import Comment, LineAnchor
 from dequorum.core.errors import CompositionError
@@ -59,8 +64,17 @@ from dequorum.review.service import (
 )
 from dequorum.routing import EmbeddingRouter, KeywordRouter
 from dequorum.routing.embedder import SentenceTransformerEmbedder
+from dequorum.services import GroundingService, LedgerService
 from dequorum.taxonomy.category import Category
 from dequorum.taxonomy.seeds import populate as populate_seed_categories
+from dequorum.worker import (
+    CloudTasksConfig,
+    CloudTasksSettlementQueue,
+    InlineSettlementQueue,
+    SettlementJob,
+    SettlementQueue,
+    run_settlement_job,
+)
 
 
 @dataclass
@@ -99,6 +113,37 @@ class AppConfig:
         default_factory=lambda: os.environ.get("DEQUORUM_MODEL_API_KEY", "")
     )
     model: str = field(default_factory=lambda: os.environ.get("DEQUORUM_MODEL", ""))
+    # Settlement queue: "inline" (default; settle synchronously in-process) or
+    # "cloudtasks" (enqueue to Cloud Tasks → worker endpoint). See worker/queue.py
+    # and docs/architecture/protocol-services.md.
+    settlement_queue: str = field(
+        default_factory=lambda: os.environ.get("DEQUORUM_SETTLEMENT_QUEUE", "inline")
+    )
+    # Per-answer revenue a settle defaults to when the trigger omits it (prototype
+    # placeholder until real per-query revenue lands).
+    settlement_revenue: float = field(
+        default_factory=lambda: float(
+            os.environ.get("DEQUORUM_SETTLEMENT_REVENUE", "1.0")
+        )
+    )
+    # Cloud Tasks target (only read when settlement_queue == "cloudtasks").
+    cloudtasks_project: str = field(
+        default_factory=lambda: os.environ.get("DEQUORUM_CLOUDTASKS_PROJECT", "")
+    )
+    cloudtasks_location: str = field(
+        default_factory=lambda: os.environ.get("DEQUORUM_CLOUDTASKS_LOCATION", "")
+    )
+    cloudtasks_queue: str = field(
+        default_factory=lambda: os.environ.get("DEQUORUM_CLOUDTASKS_QUEUE", "")
+    )
+    cloudtasks_worker_url: str = field(
+        default_factory=lambda: os.environ.get("DEQUORUM_CLOUDTASKS_WORKER_URL", "")
+    )
+    cloudtasks_service_account: str = field(
+        default_factory=lambda: os.environ.get(
+            "DEQUORUM_CLOUDTASKS_SERVICE_ACCOUNT", ""
+        )
+    )
     top_k: int = 2
     retrieve_top_k: int = 3
     router: str = "embedding"
@@ -248,6 +293,33 @@ def _model() -> BaseModel:
         base_url=_config.model_base_url,
         api_key=_config.model_api_key,
     )
+
+
+def _process_settlement_job(job: SettlementJob) -> None:
+    """Run one faithful settlement, opening its own short-lived stores. Backs the
+    inline queue and the worker endpoint (the Cloud Tasks delivery target)."""
+    model = _model()
+    embedder = _embedder()
+    with open_chat_store() as chat, open_contribution_store() as contributions:
+        ledger = LedgerService(chat, contributions)
+        run_settlement_job(job, ledger, model=model, embedder=embedder)
+
+
+def settlement_queue() -> SettlementQueue:
+    """The configured settlement queue (FastAPI dependency, so tests can override).
+    `inline` settles synchronously; `cloudtasks` enqueues to the worker endpoint."""
+    if _config.settlement_queue == "cloudtasks":
+        return CloudTasksSettlementQueue(
+            CloudTasksConfig(
+                project=_config.cloudtasks_project,
+                location=_config.cloudtasks_location,
+                queue=_config.cloudtasks_queue,
+                worker_url=_config.cloudtasks_worker_url,
+                service_account_email=_config.cloudtasks_service_account,
+                operator_key=os.environ.get("DEQUORUM_OPERATOR_API_KEY", ""),
+            )
+        )
+    return InlineSettlementQueue(_process_settlement_job)
 
 
 def _seed_if_empty() -> None:
@@ -1162,10 +1234,12 @@ def create_app() -> FastAPI:
                 yield event({"stage": "drawing_from_contributors"})
                 await asyncio.sleep(0)
                 with open_contribution_store() as store:
-                    retriever = Retriever(store)
+                    grounding = GroundingService(Retriever(store))
                     retrieved = tuple(
-                        retriever.retrieve(
-                            text, category.category_id, top_k=_config.retrieve_top_k
+                        grounding.ground(
+                            text,
+                            category_id=category.category_id,
+                            top_k=_config.retrieve_top_k,
                         )
                     )
                 system_prompt = _augment_system_prompt(
@@ -1249,6 +1323,81 @@ def create_app() -> FastAPI:
                     yield event({"title": title})
 
         return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+    # --- settlement (operator / worker) ----------------------------------
+    # The payout surface. Triggering settlement enqueues faithful, off-hot-path
+    # work; the worker endpoint is the Cloud Tasks delivery target; the read
+    # endpoint exposes the persisted journal. All operator-guarded (LedgerService
+    # is the audit boundary — see docs/architecture/protocol-services.md).
+
+    def _settlement_payload(record) -> dict | None:
+        if record is None:
+            return None
+        return {
+            "message_id": record.message_id,
+            "session_id": record.session_id,
+            "revenue": record.revenue,
+            "quality_factor": record.quality_factor,
+            "contributors": record.contributors,
+            "reviewers": record.reviewers,
+            "host": record.host,
+            "operator": record.operator,
+            "treasury": record.treasury,
+            "created_at": record.created_at,
+        }
+
+    @app.post(
+        "/v1/settlements/{message_id}",
+        tags=["settlement"],
+        status_code=202,
+    )
+    def trigger_settlement(
+        message_id: str = Path(...),
+        payload: dict = Body(default={}),
+        queue: SettlementQueue = Depends(settlement_queue),
+        _: None = Depends(require_operator),
+    ) -> dict:
+        """Enqueue faithful settlement of one answer. Inline queue settles before
+        this returns; Cloud Tasks settles on the worker shortly after. Read the
+        result back via GET. `revenue` is optional (defaults to the configured rate)."""
+        revenue = float(payload.get("revenue", _config.settlement_revenue))
+        job = SettlementJob(message_id=message_id, revenue=revenue)
+        queue.enqueue(job)
+        with open_chat_store() as chat:
+            record = chat.get_settlement(message_id)
+        return {
+            "status": "accepted",
+            "message_id": message_id,
+            "settlement": _settlement_payload(record),
+        }
+
+    @app.post("/v1/worker/settle", tags=["settlement"])
+    def worker_settle(
+        payload: dict = Body(...),
+        _: None = Depends(require_operator),
+    ) -> dict:
+        """Worker endpoint: process one settlement job. The Cloud Tasks delivery
+        target; also directly callable by an operator. Synchronous by design."""
+        try:
+            job = SettlementJob.from_dict(payload)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(400, f"invalid settlement job: {exc}") from exc
+        _process_settlement_job(job)
+        with open_chat_store() as chat:
+            record = chat.get_settlement(job.message_id)
+        return {"status": "settled", "settlement": _settlement_payload(record)}
+
+    @app.get("/v1/settlements/{message_id}", tags=["settlement"])
+    def get_settlement(
+        message_id: str = Path(...),
+        _: None = Depends(require_operator),
+    ) -> dict:
+        """Read the persisted payout for one answer (the audit boundary)."""
+        with open_chat_store() as chat:
+            record = chat.get_settlement(message_id)
+        if record is None:
+            raise HTTPException(404, "no settlement for this message")
+        return _settlement_payload(record)  # type: ignore[return-value]
 
     return app
 
