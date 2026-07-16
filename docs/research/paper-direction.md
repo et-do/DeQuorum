@@ -65,11 +65,15 @@ marginal credit") throughout code + whitepaper. "Faithful" is now a loaded RAG t
 
 ## Concrete next steps (paper-defensibility order)
 
-1. **Head-to-head objective experiment** — the load-bearing one. In the contested
-   regime, compare payout distributions under (a) reliance-grounded credit vs.
-   (b) an informativeness/coverage judge (the Ye & Yoganarasimhan objective).
-   Show they pay *different contributors*, and that only (a) pays the decisive one.
-   This is the single result that establishes the claim against the nearest neighbor.
+1. **Head-to-head objective experiment** — ✅ **done** (the load-bearing result). In
+   the contested regime ($n=50$, Qwen 2.5 Coder 7B), the *same* leave-one-out
+   machinery scored under three objectives: resemblance **0.50**, coverage /
+   informativeness (the Ye & Yoganarasimhan objective) **0.31** (≈ the 0.25 chance
+   floor), reliance / causal-quality (ours) **0.82** [0.69, 0.90], non-overlapping.
+   It is the *objective*, not the machinery, that recovers the decisive contribution
+   — the direct rebuttal to "you reinvented Ye & Yoganarasimhan." Harness:
+   `CoverageJudge` + `dequorum attribution-truth --distractors hard`; folded into
+   WHITEPAPER §8.6. Next: confirm beyond synthetic facts + a stronger (LLM) judge.
 2. **Naming + citations pass** — rename; fold the prior-art map and the
    "true-ablation, not introspection" defense into WHITEPAPER §8.6.
 3. **Truthfulness** — either add a mechanism-design payment rule over reliance credit,
