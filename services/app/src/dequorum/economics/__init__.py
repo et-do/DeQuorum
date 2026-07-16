@@ -13,7 +13,7 @@ from dequorum.economics.costmodel import CostModel, RevenueSplit
 from dequorum.economics.ledger import (
     marginal_credit_weights,
     settle_message,
-    settle_message_faithful,
+    settle_message_reliance,
 )
 from dequorum.economics.settlement import (
     Settlement,
@@ -28,6 +28,6 @@ __all__ = [
     "marginal_credit_weights",
     "quality_factor_from_feedback",
     "settle_message",
-    "settle_message_faithful",
+    "settle_message_reliance",
     "settle_query",
 ]

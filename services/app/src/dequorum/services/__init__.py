@@ -5,7 +5,7 @@ thin, documented facade over the protocol-core packages, deliberately decoupled
 from `web`/HTTP and from internal store wiring:
 
   - `LedgerService`   — the payout / attribution audit boundary (services-roadmap's
-    named `ledger` carve-out): settle an answer, settle it faithfully, and read the
+    named `ledger` carve-out): settle an answer, settle it reliance-grounded, read the
     journal. The same surface a standalone `ledger` FastAPI service would lift.
   - `GroundingService` — vote-gated retrieval: turn a query into the approved
     grounding set, independent of the retrieval implementation (BM25 today).

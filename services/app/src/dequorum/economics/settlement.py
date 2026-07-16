@@ -9,7 +9,7 @@ the system produces for an answer:
 
 and produces a `Settlement`: how much each contributor, reviewer, the host, the
 operator, and the treasury earns for that query. It is deliberately *method-
-agnostic* about how `credit_weight` was computed — faithful quality-grounded
+agnostic* about how `credit_weight` was computed — reliance-grounded quality
 marginal, routing-by-construction, or a fallback — so the attribution research
 (whitepaper §8.6) plugs in without changing settlement.
 

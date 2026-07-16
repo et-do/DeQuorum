@@ -296,8 +296,8 @@ def _model() -> BaseModel:
 
 
 def _process_settlement_job(job: SettlementJob) -> None:
-    """Run one faithful settlement, opening its own short-lived stores. Backs the
-    inline queue and the worker endpoint (the Cloud Tasks delivery target)."""
+    """Run one reliance-grounded settlement, opening its own short-lived stores.
+    Backs the inline queue and the worker endpoint (the Cloud Tasks delivery target)."""
     model = _model()
     embedder = _embedder()
     with open_chat_store() as chat, open_contribution_store() as contributions:
@@ -1325,7 +1325,7 @@ def create_app() -> FastAPI:
         return StreamingResponse(gen(), media_type="application/x-ndjson")
 
     # --- settlement (operator / worker) ----------------------------------
-    # The payout surface. Triggering settlement enqueues faithful, off-hot-path
+    # The payout surface. Triggering settlement enqueues reliance-grounded, off-path
     # work; the worker endpoint is the Cloud Tasks delivery target; the read
     # endpoint exposes the persisted journal. All operator-guarded (LedgerService
     # is the audit boundary — see docs/architecture/protocol-services.md).
@@ -1357,8 +1357,8 @@ def create_app() -> FastAPI:
         queue: SettlementQueue = Depends(settlement_queue),
         _: None = Depends(require_operator),
     ) -> dict:
-        """Enqueue faithful settlement of one answer. Inline queue settles before
-        this returns; Cloud Tasks settles on the worker shortly after. Read the
+        """Enqueue reliance-grounded settlement of one answer. Inline queue settles
+        before this returns; Cloud Tasks settles on the worker shortly after. Read the
         result back via GET. `revenue` is optional (defaults to the configured rate)."""
         revenue = float(payload.get("revenue", _config.settlement_revenue))
         job = SettlementJob(message_id=message_id, revenue=revenue)

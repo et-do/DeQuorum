@@ -21,7 +21,7 @@ ROLE_NETWORK = "network"
 _VALID_ROLES = {ROLE_USER, ROLE_NETWORK}
 
 # Per-answer feedback is a thumbs signal: +1 helpful / -1 not. This is the quality
-# ground truth the faithful payout measure reads — an answer's grounding set is on
+# ground truth the reliance-grounded payout measure reads — the grounding set is on
 # the message, so rating -> message -> contributions (see build-direction.md).
 VALID_FEEDBACK = (-1, 1)
 

@@ -15,15 +15,18 @@ this is the persistent, money-facing settlement of a query.
 
 Credit policy: `settle_message` defaults to an equal split across the cited
 contributions, but accepts injected `credit_weights` — this is the slot where the
-*faithful* measure plugs in. `marginal_credit_weights` computes those weights with
-the quality-grounded marginal (whitepaper §8.6, faithful 0.89 vs resemblance 0.50):
-it ablates each contribution and weights by the *judge* marginal (the quality drop
-when it's removed), not embedding resemblance. Settlement itself is unchanged — it
-just consumes the weights. Routing-by-construction would feed the same slot.
+*reliance-grounded* measure plugs in. `marginal_credit_weights` computes those
+weights with the quality-grounded marginal (whitepaper §8.6, reliance-grounded 0.89
+vs resemblance 0.50): it ablates each contribution and weights by the *judge*
+marginal (the quality drop when it's removed), not embedding resemblance. Settlement
+itself is unchanged — it just consumes the weights. Routing-by-construction would
+feed the same slot.
 
-The faithful computation is leave-one-out — (k+1) generations + judge calls per
-answer — so it runs at settlement time (batch / off the chat hot path), and needs a
-`score_answer` quality judge to supply the signal.
+"Reliance-grounded" = credit tracks the answer's causal reliance on a contribution
+(the true-ablation quality drop), distinct from the RAG "citation faithfulness"
+term of art (arXiv 2412.18004). The computation is leave-one-out — (k+1)
+generations + judge calls per answer — so it runs at settlement time (batch / off
+the chat hot path), and needs a `score_answer` quality judge to supply the signal.
 """
 
 from __future__ import annotations
@@ -67,7 +70,7 @@ def settle_message(
 
     `credit_weights` maps contribution_id -> share of the contributor pool. When
     omitted, the contributors are paid by an equal split across the cited set (v1).
-    Pass the output of `marginal_credit_weights` here for the faithful,
+    Pass the output of `marginal_credit_weights` here for the reliance-grounded,
     quality-grounded payout. A cited contribution absent from a supplied map gets
     zero (its share flows to treasury via `settle_query`)."""
     msg = chat_store.get_message(message_id)
@@ -80,9 +83,9 @@ def settle_message(
     if msg.response:
         grounding_ids = list(msg.response.get("retrieved_contribution_ids") or [])
 
-    # Credit per cited contribution: the injected faithful weight if provided, else
-    # an equal split. distribute_pool aggregates per contributor, so a contributor
-    # cited twice earns the sum of those weights.
+    # Credit per cited contribution: the injected reliance-grounded weight if
+    # provided, else an equal split. distribute_pool aggregates per contributor, so a
+    # contributor cited twice earns the sum of those weights.
     credits: list[ContributionCredit] = []
     reviewers: set[str] = set()
     k = len(grounding_ids)
@@ -138,14 +141,15 @@ def marginal_credit_weights(
     score_answer: Callable[[str], float],
     persona_prompt: str = DEFAULT_PERSONA,
 ) -> dict[str, float]:
-    """Compute the *faithful* per-contribution credit weights for one answer, ready
-    to hand to `settle_message(credit_weights=...)`.
+    """Compute the *reliance-grounded* per-contribution credit weights for one
+    answer, ready to hand to `settle_message(credit_weights=...)`.
 
     This is the whitepaper §8.6 measure: leave-one-out ablation weighted by the
     drop in answer *quality* (the `score_answer` judge), normalized to sum to 1.
     Resemblance-based weighting is a coin-flip in the contested regime (0.50);
-    quality-grounded is faithful (0.89) — so we read `judge_marginal`, not
-    `credit_weight`. Negative marginals (a contribution that *hurt*) clamp to 0.
+    quality-grounded reliance recovers the decisive contribution 0.89 of the time —
+    so we read `judge_marginal`, not `credit_weight`. Negative marginals (a
+    contribution that *hurt*) clamp to 0.
 
     Cost is (k+1) generations + judge calls; intended for batch settlement, not the
     chat hot path. Returns {} for an empty grounding set; falls back to an equal
@@ -175,7 +179,7 @@ def marginal_credit_weights(
     return {c.contribution_id: r / total for c, r in zip(credits, raw, strict=True)}
 
 
-def settle_message_faithful(
+def settle_message_reliance(
     *,
     chat_store: ChatStore,
     contribution_store: ContributionStore,
@@ -186,8 +190,8 @@ def settle_message_faithful(
     judge_model: BaseModel | None = None,
     split: RevenueSplit | None = None,
 ) -> tuple[Settlement, SettlementRecord]:
-    """Settle an answer with the *faithful* (quality-grounded) credit, end-to-end —
-    the production settlement trigger (build-direction.md item 6).
+    """Settle an answer with *reliance-grounded* (quality-grounded) credit,
+    end-to-end — the production settlement trigger (build-direction.md item 6).
 
     Rebuilds the answer's grounding set from the message, scores each leave-one-out
     ablation with a **reference-free** `LLMJudge` (production has no gold — the judge

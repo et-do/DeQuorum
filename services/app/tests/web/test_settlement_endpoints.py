@@ -87,7 +87,7 @@ def test_trigger_settles_and_is_readable(client: TestClient) -> None:
 def test_worker_endpoint_processes_a_job(
     monkeypatch: pytest.MonkeyPatch, client: TestClient
 ) -> None:
-    # Stub the heavy faithful path (covered in tests/worker) so this test asserts the
+    # Stub the heavy reliance-grounded path (in tests/worker) so this test asserts the
     # endpoint wiring — job parse, guard, settle, persist, response — not the model.
     import dequorum.web.app as appmod
 

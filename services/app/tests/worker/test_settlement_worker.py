@@ -50,7 +50,7 @@ def test_settlement_job_round_trips_through_dict() -> None:
     assert SettlementJob.from_dict(job.to_dict()) == job
 
 
-def test_run_settlement_job_settles_faithfully() -> None:
+def test_run_settlement_job_settles_by_reliance() -> None:
     query = "explain quasar entanglement spectroscopy"
     relevant = Contribution.create(
         contributor_id="alice",

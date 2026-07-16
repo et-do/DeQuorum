@@ -1,7 +1,7 @@
 """Deferred settlement work: the unit a worker processes off the request path.
 
-Faithful settlement is expensive — `(k+1)` model generations plus judge calls per
-answer (whitepaper §8.6). Running it inline on a Cloud Run request would pin an
+Reliance-grounded settlement is expensive — `(k+1)` model generations plus judge
+calls per answer (whitepaper §8.6). Running it inline on a Cloud Run request pins an
 instance and bill per-request for the whole settle (services-roadmap). So it's a
 job: the API enqueues it, a worker (or the inline runner in dev) processes it.
 """
@@ -42,9 +42,10 @@ def run_settlement_job(
     embedder: Embedder,
     judge_model: BaseModel | None = None,
 ) -> Settlement:
-    """Process one job: the faithful, quality-grounded payout. The caller owns the
-    `ledger` (and its stores') lifecycle; this just runs the expensive settle."""
-    return ledger.settle_faithful(
+    """Process one job: the reliance-grounded, quality-grounded payout. The caller
+    owns the `ledger` (and its stores') lifecycle; this just runs the expensive
+    settle."""
+    return ledger.settle_reliance(
         job.message_id,
         job.revenue,
         model=model,

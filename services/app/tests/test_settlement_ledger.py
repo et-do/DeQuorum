@@ -9,7 +9,7 @@ from dequorum.core.errors import CompositionError
 from dequorum.economics.ledger import (
     marginal_credit_weights,
     settle_message,
-    settle_message_faithful,
+    settle_message_reliance,
 )
 from dequorum.eval import KeywordRecallJudge
 from dequorum.knowledge.contribution import Contribution
@@ -71,9 +71,9 @@ def test_settle_message_quality_gate_withholds_on_downvote() -> None:
     assert _approx(settlement.total(), 1.0)  # withheld share conserved into treasury
 
 
-def test_settle_message_pays_by_injected_faithful_weights() -> None:
-    """The faithful measure plugs into the credit_weights slot: payouts follow the
-    injected per-contribution weights, not an equal split."""
+def test_settle_message_pays_by_injected_reliance_weights() -> None:
+    """The reliance-grounded measure plugs into the credit_weights slot: payouts
+    follow the injected per-contribution weights, not an equal split."""
     cstore = ContributionStore()
     a = Contribution.create(
         contributor_id="alice", text="quic over udp", citations=(), signing_key=b"k"
@@ -123,8 +123,8 @@ class _RelevanceModel:
 
 
 def test_marginal_credit_weights_favor_the_quality_carrying_contribution() -> None:
-    """End-to-end faithful weighting: the contribution that actually grounds the
-    answer's quality earns the dominant weight; the irrelevant one earns ~0."""
+    """End-to-end reliance-grounded weighting: the contribution that actually
+    grounds the answer's quality earns the dominant weight; the irrelevant earns ~0."""
     query = "explain quasar entanglement spectroscopy"
     relevant = Contribution.create(
         contributor_id="alice",
@@ -170,9 +170,9 @@ class _KeywordJudgeModel:
         yield self.complete(system, user)
 
 
-def test_settle_message_faithful_pays_the_quality_carrier_end_to_end() -> None:
+def test_settle_message_reliance_pays_the_quality_carrier_end_to_end() -> None:
     """The production trigger: rebuild the grounding set, judge each ablation
-    reference-free, and settle by the faithful weights — the quality-carrying
+    reference-free, and settle by the reliance-grounded weights — the quality-carrying
     contribution earns the contributor pool; the irrelevant one earns ~0."""
     query = "explain quasar entanglement spectroscopy"
     relevant = Contribution.create(
@@ -205,7 +205,7 @@ def test_settle_message_faithful_pays_the_quality_carrier_end_to_end() -> None:
             ],
         },
     )
-    settlement, record = settle_message_faithful(
+    settlement, record = settle_message_reliance(
         chat_store=chat,
         contribution_store=cstore,
         message_id=msg.message_id,

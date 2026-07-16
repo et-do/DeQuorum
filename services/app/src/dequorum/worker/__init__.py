@@ -1,6 +1,6 @@
 """Worker: deferred/batched work off the request hot path.
 
-Today: faithful settlement (the `(k+1)`-generation quality-grounded payout). The
+Today: reliance-grounded settlement (the `(k+1)`-generation quality payout). The
 queue abstraction lets the same job run inline in dev or via Cloud Tasks in prod
 (services-roadmap). Future async work (embedding recompute, document extraction)
 lands here too.

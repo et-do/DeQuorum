@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
-from dequorum.economics.ledger import settle_message, settle_message_faithful
+from dequorum.economics.ledger import settle_message, settle_message_reliance
 
 if TYPE_CHECKING:
     from dequorum.chat.store import ChatStore, SettlementRecord
@@ -51,7 +51,7 @@ class LedgerService:
         credit_weights: Mapping[str, float] | None = None,
     ) -> Settlement:
         """Settle one answer and persist its payout. `credit_weights` injects the
-        faithful per-contribution shares; omit for the equal-split default."""
+        reliance-grounded per-contribution shares; omit for the equal-split default."""
         settlement, _ = settle_message(
             chat_store=self._chat,
             contribution_store=self._contributions,
@@ -62,7 +62,7 @@ class LedgerService:
         )
         return settlement
 
-    def settle_faithful(
+    def settle_reliance(
         self,
         message_id: str,
         revenue: float,
@@ -72,10 +72,10 @@ class LedgerService:
         judge_model: BaseModel | None = None,
         split: RevenueSplit | None = None,
     ) -> Settlement:
-        """Settle with the quality-grounded marginal credit (§8.6) — the off-hot-path
-        production path. Computes faithful weights via a reference-free judge, then
-        settles. See `economics.ledger.settle_message_faithful`."""
-        settlement, _ = settle_message_faithful(
+        """Settle with reliance-grounded marginal credit (§8.6) — the off-hot-path
+        production path. Computes the weights via a reference-free judge, then
+        settles. See `economics.ledger.settle_message_reliance`."""
+        settlement, _ = settle_message_reliance(
             chat_store=self._chat,
             contribution_store=self._contributions,
             message_id=message_id,
