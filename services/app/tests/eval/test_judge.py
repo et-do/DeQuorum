@@ -3,7 +3,13 @@ from __future__ import annotations
 from collections.abc import Iterator
 
 from dequorum.benchmark.questions import SEED_QUESTIONS
-from dequorum.eval import CoverageJudge, KeywordRecallJudge, LLMJudge, gold_for
+from dequorum.eval import (
+    CoverageJudge,
+    KeywordRecallJudge,
+    LLMCoverageJudge,
+    LLMJudge,
+    gold_for,
+)
 from dequorum.eval.gold import SEEDED_GOLD
 
 
@@ -68,6 +74,13 @@ class _FixedModel:
 
     def stream(self, system: str, user: str) -> Iterator[str]:
         yield self.reply
+
+
+def test_llm_coverage_judge_parses_and_is_reference_free() -> None:
+    # Same parse/normalize contract as LLMJudge, but grades coverage and takes no
+    # reference (truth-agnostic informativeness — the LLM analogue of CoverageJudge).
+    assert LLMCoverageJudge(_FixedModel("7")).score(query="q", answer="a") == 0.7
+    assert LLMCoverageJudge(_FixedModel("nope")).score(query="q", answer="a") == 0.0
 
 
 def test_llm_judge_parses_and_normalizes() -> None:

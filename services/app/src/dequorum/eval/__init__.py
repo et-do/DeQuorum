@@ -13,6 +13,7 @@ from dequorum.eval.judge import (
     CoverageJudge,
     Judge,
     KeywordRecallJudge,
+    LLMCoverageJudge,
     LLMJudge,
 )
 
@@ -22,6 +23,7 @@ __all__ = [
     "GoldQuestion",
     "Judge",
     "KeywordRecallJudge",
+    "LLMCoverageJudge",
     "LLMJudge",
     "gold_for",
     "gold_questions",

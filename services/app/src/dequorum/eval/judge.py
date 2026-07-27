@@ -1,12 +1,21 @@
-"""Answer-quality judges.
+"""Answer-quality judges — two objectives, two grader families each.
 
-Two implementations:
-  - KeywordRecallJudge: deterministic, reference-based (fraction of gold key
-    facts the answer contains). Independent of the embedding-resemblance
-    attribution measure, so it is a valid *external* check on quality, and
-    it makes the faithfulness experiment reproducible without a model.
-  - LLMJudge: LLM-as-judge with a strict 0-10 rubric. More holistic, but
-    biased and costly; used to corroborate the deterministic judge.
+The head-to-head in whitepaper §8.6 isolates the *objective* a marginal is scored
+against, so judges come in two objectives, each with a deterministic and an LLM
+grader (run both to show the objective gap is not a grader artifact):
+
+  Correctness / reliance (truth-sensitive, reference-based):
+  - KeywordRecallJudge: deterministic, model-independent (fraction of gold key facts
+    present). Unbiased control; makes the experiment reproducible without a model.
+  - LLMJudge: LLM-as-judge, strict 0-10 correctness+completeness vs a reference.
+
+  Coverage / informativeness (truth-agnostic, reference-free — the Ye &
+  Yoganarasimhan 2025 payout objective):
+  - CoverageJudge: deterministic topical-term coverage of the query.
+  - LLMCoverageJudge: LLM-as-judge, 0-10 topical completeness, correctness ignored.
+
+LLM judges are more holistic but risk self-preference bias when the judge is the
+generator (Zheng et al. 2023); the deterministic graders are the unbiased controls.
 """
 
 from __future__ import annotations
@@ -86,6 +95,34 @@ class LLMJudge:
             f"Answer:\n{answer}\n\n"
             "Score (0-10):"
         )
+        out = self.model.complete(system=system, user=user)
+        match = re.search(r"\d+(?:\.\d+)?", out)
+        if not match:
+            return 0.0
+        return max(0.0, min(1.0, float(match.group()) / 10.0))
+
+
+@dataclass(frozen=True, slots=True)
+class LLMCoverageJudge:
+    """LLM-as-judge for *informativeness/coverage*, reference-free and explicitly
+    truth-agnostic: it grades how completely and relevantly the answer addresses the
+    question, NOT whether it is correct. This is the LLM-graded counterpart of
+    `CoverageJudge` and the LLM analogue of the Ye & Yoganarasimhan (2025) coverage
+    value function — provided so the head-to-head can run both objectives under the
+    *same* grader family (contrast `LLMJudge`, which grades correctness vs a
+    reference). See whitepaper §8.6 methodology."""
+
+    model: BaseModel
+
+    def score(self, *, query: str, answer: str, reference: Sequence[str] = ()) -> float:
+        system = (
+            "You rate how COMPLETELY and relevantly an answer addresses a question — "
+            "its coverage of the topic — on an integer scale from 0 to 10. Judge "
+            "topical completeness ONLY; do NOT judge whether the answer is factually "
+            "correct. A thorough, on-topic answer scores high even if it may be "
+            "wrong. Reply with ONLY the integer."
+        )
+        user = f"Question: {query}\n\nAnswer:\n{answer}\n\nCoverage (0-10):"
         out = self.model.complete(system=system, user=user)
         match = re.search(r"\d+(?:\.\d+)?", out)
         if not match:
