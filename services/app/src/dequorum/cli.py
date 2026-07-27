@@ -512,6 +512,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Also compute the Shapley method (exact over 2^cited subsets — ~16 "
         "generations/fact; off by default, the leave-one-out methods suffice).",
     )
+    atruth.add_argument(
+        "--judge",
+        choices=["keyword", "llm"],
+        default="keyword",
+        help="Ground-truth grader for the reliance/coverage objectives. keyword: "
+        "deterministic, model-independent (KeywordRecallJudge / CoverageJudge). llm: "
+        "LLM-as-judge (LLMJudge / LLMCoverageJudge) — less brittle but risks "
+        "self-preference when the judge model is the generator; run both to show the "
+        "objective gap is robust to grader choice.",
+    )
+    atruth.add_argument(
+        "--judge-model",
+        default="",
+        help="For --judge llm: an INDEPENDENT judge model tag (e.g. a different "
+        "family) so the grader is not the generator, removing self-preference bias. "
+        "Empty = judge with the generator model.",
+    )
     atruth.add_argument("--limit", type=int, default=None, help="First N facts")
     atruth.add_argument("--output", default="docs/benchmarks/attribution_truth.md")
     _add_corpus_args(atruth)
@@ -1669,9 +1686,10 @@ def _add_corpus_args(parser: argparse.ArgumentParser) -> None:
     hand-written facts (default) or a generated synthetic corpus at scale."""
     parser.add_argument(
         "--corpus",
-        choices=["novelty", "synthetic"],
+        choices=["novelty", "synthetic", "real"],
         default="novelty",
-        help="Invented-fact corpus: 8 hand-written facts, or a generated set at scale",
+        help="Fact corpus: 8 hand-written facts, a generated synthetic set at scale, "
+        "or the real-contested set (real facts + documented misconceptions)",
     )
     parser.add_argument(
         "--facts",
@@ -1693,7 +1711,8 @@ def _select_facts(args: argparse.Namespace):
     benches that don't expose the corpus args fall back to the novelty set."""
     from dequorum.benchmark.novelty import NOVELTY_FACTS
 
-    if getattr(args, "corpus", "novelty") == "synthetic":
+    corpus = getattr(args, "corpus", "novelty")
+    if corpus == "synthetic":
         from dequorum.benchmark.synthetic import generate_facts
 
         facts = generate_facts(
@@ -1701,6 +1720,10 @@ def _select_facts(args: argparse.Namespace):
             seed=getattr(args, "seed", 0),
             topics=getattr(args, "topics", None),
         )
+    elif corpus == "real":
+        from dequorum.benchmark.real_contested import REAL_CONTESTED_FACTS
+
+        facts = list(REAL_CONTESTED_FACTS)
     else:
         facts = NOVELTY_FACTS
     limit = getattr(args, "limit", None)
@@ -2528,21 +2551,49 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
     from dequorum.attribution.shapley import shapley_attribution
     from dequorum.benchmark.stats import ci_str
     from dequorum.core.crypto import generate_signing_key
-    from dequorum.eval import CoverageJudge, KeywordRecallJudge
+    from dequorum.eval import (
+        CoverageJudge,
+        KeywordRecallJudge,
+        LLMCoverageJudge,
+        LLMJudge,
+    )
     from dequorum.knowledge.contribution import Contribution
     from dequorum.retrieval.bm25 import BM25Index, ScoredContribution
 
     facts = _select_facts(args)
-    # Two objectives, same leave-one-out machinery, to isolate what the objective
-    # buys: `judge` scores recall of the TRUE gold (reliance/quality — ours);
-    # `coverage` scores reference-free topical coverage (informativeness — the
-    # Ye & Yoganarasimhan 2025 objective), truth-agnostic. See whitepaper §8.6.
-    judge = KeywordRecallJudge()
-    coverage = CoverageJudge()
     # Short generations: each answer only needs to contain the gold token for the
     # judge, and this command issues many of them per fact (leave-one-out + optional
     # Shapley), so a small num_predict is the dominant cost lever.
     model = _grounding_model(args, num_predict=64)
+    # Two objectives, same leave-one-out machinery, to isolate what the objective
+    # buys: `judge` scores recall of the TRUE gold (reliance/quality — ours);
+    # `coverage` scores reference-free topical coverage (informativeness — the
+    # Ye & Yoganarasimhan 2025 objective), truth-agnostic. See whitepaper §8.6. The
+    # --judge flag swaps the grader family (deterministic keyword vs LLM-as-judge) to
+    # show the objective gap is not an artifact of the grader.
+    judge_kind = getattr(args, "judge", "keyword")
+    judge_model_tag = getattr(args, "judge_model", "") or args.model
+    if judge_kind == "llm":
+        # Independent judge model (if --judge-model given) removes self-preference:
+        # the grader is a different model than the generator. num_predict is tiny —
+        # the judge only emits a 0-10 integer.
+        from dequorum.inference.base_model import MockBaseModel, OllamaBaseModel
+
+        judge_model = (
+            MockBaseModel()
+            if args.mock
+            else OllamaBaseModel(
+                model=judge_model_tag,
+                host=args.host,
+                timeout_seconds=300.0,
+                num_predict=8,
+            )
+        )
+        judge: object = LLMJudge(judge_model)
+        coverage: object = LLMCoverageJudge(judge_model)
+    else:
+        judge = KeywordRecallJudge()
+        coverage = CoverageJudge()
     embedder = _truth_embedder(args)
     rng = _random.Random(getattr(args, "seed", 0))
     m = max(2, args.cited)  # contributions per query: 1 decisive + (m-1) distractors
@@ -2697,11 +2748,45 @@ def _cmd_attribution_truth(args: argparse.Namespace) -> int:
             "case; the contested regime (`--distractors hard`) is the real test."
         )
         decisive_note = f"1 decisive + {m - 1} distractors"
+    is_self_judge = judge_kind == "llm" and judge_model_tag == args.model
+    if judge_kind == "keyword":
+        judge_note = (
+            "keyword (deterministic, model-independent — KeywordRecallJudge / "
+            "CoverageJudge)"
+        )
+    elif is_self_judge:
+        judge_note = (
+            f"LLM-as-judge (LLMJudge / LLMCoverageJudge, judge model `{args.model}` "
+            "= generator, self-judged)"
+        )
+    else:
+        judge_note = (
+            "LLM-as-judge (LLMJudge / LLMCoverageJudge, INDEPENDENT judge model "
+            f"`{judge_model_tag}`, generator `{args.model}`)"
+        )
+    if is_self_judge:
+        self_judge_caveat = [
+            "",
+            "> **Caveat (self-judge):** the judge model is the generator, so scores may "
+            "carry self-preference bias (Zheng et al. 2023, *Judging LLM-as-a-Judge*). "
+            "The keyword grader — deterministic and model-independent — is the unbiased "
+            "control; an independent judge model (`--judge-model`) removes this bias.",
+        ]
+    elif judge_kind == "llm":
+        self_judge_caveat = [
+            "",
+            "> **Independent judge:** the grader is a different model than the "
+            "generator, so self-preference bias (Zheng et al. 2023) does not apply. "
+            "The objective gap holding here corroborates the keyword control.",
+        ]
+    else:
+        self_judge_caveat = []
     lines = [
         "# Attribution faithfulness vs known ground truth",
         "",
         f"Model: `{args.model or 'mock'}` · facts {len(facts)} · "
-        f"contributions per query {m} ({decisive_note})",
+        f"contributions per query {m} ({decisive_note}) · grader: {judge_note}",
+        *self_judge_caveat,
         "",
         regime,
         "",

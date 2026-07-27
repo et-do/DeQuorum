@@ -205,6 +205,40 @@ def test_attribution_truth_flat_is_chance(tmp_path, monkeypatch) -> None:
     assert "(n=6)" in text  # CI reports the sample size
 
 
+def test_attribution_truth_independent_judge_plumbing(tmp_path, monkeypatch) -> None:
+    """--judge llm --judge-model <tag> routes grading to a separate model and the
+    report labels it an INDEPENDENT judge (no self-preference caveat). Plumbing only —
+    real numbers need GPU/Ollama; here the models are mocks."""
+    import dequorum.cli as cli
+    from dequorum.routing.embedder import HashEmbedder
+
+    monkeypatch.setattr(cli, "_grounding_model", lambda args, **kw: _EchoSystemModel())
+    monkeypatch.setattr(cli, "_truth_embedder", lambda args: HashEmbedder(256))
+    out = tmp_path / "at_indep.md"
+    rc = cli._cmd_attribution_truth(
+        _ns(
+            mock=True,
+            model="",
+            host="",
+            cited=4,
+            limit=4,
+            output=str(out),
+            corpus="synthetic",
+            facts=4,
+            topics=None,
+            seed=0,
+            distractors="hard",
+            judge="llm",
+            judge_model="independent-tag",
+        )
+    )
+    assert rc == 0
+    text = out.read_text()
+    assert "INDEPENDENT judge model" in text and "independent-tag" in text
+    assert "Independent judge:" in text  # the corroboration note, not the self caveat
+    assert "self-preference bias" not in text.split("Independent judge:")[0]
+
+
 def test_attribution_truth_hard_uses_false_twin(tmp_path, monkeypatch) -> None:
     """--distractors hard puts each fact's false twin in the cited set (the contested
     regime). The report must declare the hard regime; the ground-truth decisive note
