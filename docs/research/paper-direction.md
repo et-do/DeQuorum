@@ -29,10 +29,14 @@ system.
 > contribution from its near-identical false twin — the regime where payment fairness
 > actually bites.
 
-**Evidence we already have** (WHITEPAPER §8.6, n=40 contested regime): retrieval score
-and resemblance-marginal are coin-flips (0.50) at placing credit on the decisive
-contribution; the **quality-grounded (reliance) marginal recovers it 0.89 of the
-time**, non-overlapping intervals. That table is the spine of the paper.
+**Evidence we have** (WHITEPAPER §8.6, contested regime, n=50, Qwen 2.5 Coder 7B):
+same leave-one-out machinery, three objectives — resemblance **0.50**, coverage /
+informativeness (the Ye & Yoganarasimhan objective) **0.31** (≈ the 0.25 chance
+floor), reliance / causal-quality (ours) **0.82** [0.69, 0.90], non-overlapping. It
+is the *objective*, not the machinery, that recovers the decisive contribution. A
+robustness run swaps the deterministic keyword grader for an LLM-as-judge (`--judge
+llm`) to show the gap is not a grader artifact. Full method + limitations in
+[methodology.md](methodology.md); that table is the spine of the paper.
 
 ## What we build on / differentiate from
 
@@ -50,12 +54,18 @@ one axis. (Full citations: memory `key-prior-art-citations`.)
 
 ## Risks to pre-empt (state them in the paper)
 
-1. **Incentive-compatibility.** LOO/Shapley are *not truthful payments* absent
-   Myerson/VCG rules ("Do Data Valuations Make Good Data Prices?", 2504.05563). Our
-   conserved-revenue split inherits this. Either address truthfulness or scope it as
-   an explicit limitation — do not hand-wave it.
-2. **The margin is one axis.** Novelty rests entirely on causal-quality vs.
-   informativeness objective. The head-to-head experiment (below) is load-bearing.
+1. **Incentive-compatibility — but state it precisely.** The Han et al. 2025 result
+   ("Do Data Valuations Make Good Data Prices?", 2504.05563) that LOO/Shapley are not
+   truthful *prices* targets **report-based** markets; DeQuorum elicits no cost/value
+   reports (it measures value ex post), so that critique does not transfer as stated.
+   What we *do* claim is **manipulation-resistance** (duplication/padding/collusion,
+   §8.6); report-based strategy-proofness is out of scope for the current mechanism
+   and is the sharpest open EC problem. Full analysis:
+   [incentive-compatibility.md](incentive-compatibility.md). Do not overclaim in
+   either direction.
+2. **The margin is one axis.** Novelty rests on causal-quality vs. informativeness
+   objective — now backed by the head-to-head (0.82 vs 0.31), with an LLM-judge
+   robustness run to show it is not a keyword-grader artifact.
 
 ## Naming
 
@@ -74,11 +84,23 @@ marginal credit") throughout code + whitepaper. "Faithful" is now a loaded RAG t
    — the direct rebuttal to "you reinvented Ye & Yoganarasimhan." Harness:
    `CoverageJudge` + `dequorum attribution-truth --distractors hard`; folded into
    WHITEPAPER §8.6. Next: confirm beyond synthetic facts + a stronger (LLM) judge.
-2. **Naming + citations pass** — rename; fold the prior-art map and the
-   "true-ablation, not introspection" defense into WHITEPAPER §8.6.
-3. **Truthfulness** — either add a mechanism-design payment rule over reliance credit,
-   or write the limitation honestly.
-4. **Protocol positioning** — a short "related standards" section placing us next to
+2. **Naming + citations pass** — ✅ **done**. Renamed faithful→reliance-grounded
+   across code + whitepaper; prior-art map + "true-ablation, not introspection"
+   defense folded into WHITEPAPER §8.6.
+3. **Rigor pass** — ✅ **done** (4 conditions, 2 generators × 3 graders, free Ollama).
+   Coverage (the competitor's objective) fails at chance in *every* condition
+   (0.27–0.31) — robust across grader and generator. Reliance separates cleanly with
+   an accurate grader across two generator families (keyword: qwen 0.82, llama 0.74)
+   but is **judge-accuracy-bounded** (weak independent 3B judge → 0.53, diagnosed as a
+   weak-signal effect, reported straight). Added `--judge-model` (independent judge).
+   Written up transparently: [methodology.md](methodology.md) (4-condition tables,
+   cited) + [incentive-compatibility.md](incentive-compatibility.md). **Open:** a
+   *strong* independent judge to sharpen reliance-under-independent-grader; a
+   real (non-synthetic) multi-domain corpus.
+4. **Truthfulness (theory)** — the open EC problem: a strategy-proof, budget-balanced
+   payment whose allocation is reliance credit (Myerson/VCG vs Green–Laffont). Scoped,
+   not solved — see incentive-compatibility.md.
+5. **Protocol positioning** — a short "related standards" section placing us next to
    OpenAttribution/RSL as the attribution+payment layer.
 
 ## Venue

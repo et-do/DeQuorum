@@ -2,6 +2,16 @@
 
 Literature reviews and experiment specs. Each note is a snapshot of what the published frontier looked like on a specific date; each experiment is a falsifiable spec for one self-contained piece of work.
 
+## Paper & methods
+
+| Doc | What |
+| --- | --- |
+| [paper/reliance-grounded-credit.md](../paper/reliance-grounded-credit.md) | **The draft paper** — "Which objective pays the right contributor?" (workshop/preprint), leading with the robust negative result |
+| [paper-direction.md](paper-direction.md) | The pinned direction: the one claim (reliance-grounded credit), what we build on/differ from, risks, venue |
+| [methodology.md](methodology.md) | How §8.6 is tested — design, corpus, graders, statistics, reproducibility, limitations (transparent by intent) |
+| [incentive-compatibility.md](incentive-compatibility.md) | What reliance-grounded payment does/does not guarantee — manipulation-resistance vs. report-based strategy-proofness |
+| [contested-facts-datasheet.md](contested-facts-datasheet.md) | Datasheet for the natural-regime corpus (real facts + documented misconceptions) — composition, provenance, limitations |
+
 ## Notes (literature sweeps)
 
 | # | Topic | Date |
