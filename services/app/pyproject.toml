@@ -18,13 +18,13 @@ classifiers = [
 dependencies = [
     # Web stack — JSON-only API. UI lives in services/frontend (React),
     # so no Jinja templates or form-data parsing in this service.
-    "fastapi>=0.115",
+    "fastapi>=0.141.1",
     "uvicorn[standard]>=0.49.0",
     "pydantic>=2.12",
-    "pydantic-settings>=2.13",
+    "pydantic-settings>=2.15.0",
     # Database
     "psycopg[binary,pool]>=3.3.4",
-    "alembic>=1.13",
+    "alembic>=1.19.1",
     # Ed25519 signing/verification for the contribution proof chain. Public-key
     # signatures are what make attribution verifiable without trusting the
     # operator — load-bearing, so declared directly rather than relied on
@@ -33,14 +33,14 @@ dependencies = [
     # Auth — verify Firebase ID tokens (uses FIREBASE_AUTH_EMULATOR_HOST
     # automatically in dev; falls back to a Google credentials lookup in
     # production).
-    "firebase-admin>=6.5",
+    "firebase-admin>=7.5.0",
     # Embeddings (CPU-only torch via [tool.uv.sources] below — saves ~3 GB)
-    "sentence-transformers>=5.0",
+    "sentence-transformers>=5.7.0",
     # Floor kept low on purpose: a high floor forces pip to upgrade numpy
     # mid-session on hosts that ship an older 2.x (e.g. Colab), which breaks
     # the running kernel (numpy C-extension vs Python mismatch). Nothing here
     # needs >=2.4.
-    "numpy>=1.26",
+    "numpy>=2.5.2",
 ]
 
 # Optional extras. Install any combination with
@@ -60,13 +60,13 @@ notebook = [
 # LoRA distillation PoC (dequorum distill-poc). Kept optional so the serving
 # image doesn't carry training deps. transformers comes via sentence-transformers.
 distill = [
-    "peft>=0.19",
+    "peft>=0.20.0",
     "accelerate>=1.14.0",
 ]
 # Cloud Tasks queue adapter for async settlement (worker/queue.py). Optional so the
 # default inline queue carries no GCP dependency; install in the deployed worker.
 cloudtasks = [
-    "google-cloud-tasks>=2.16",
+    "google-cloud-tasks>=2.24.0",
 ]
 experimental = [
     # Symbolic math for deterministic/algebraic reasoning
@@ -74,36 +74,36 @@ experimental = [
     # Category theory and compositional diagrams (DisCoPy)
     "discopy>=1.2",
     # Scientific computing
-    "scipy>=1.15",
+    "scipy>=1.18.0",
     # RDF/OWL knowledge graph representation (semantic triple stores for Knowledge Crystal nodes)
     "rdflib>=7.1",
     # SPARQL client for querying Wikidata, DBpedia, and other open knowledge graph endpoints
     "sparqlwrapper>=2.0",
     # WordNet + corpus access (ConceptNet, tokenizers, etc.) for bootstrapping node data
-    "nltk>=3.9",
+    "nltk>=3.10.2",
     # SMT solver for formal Proof-of-Correctness and constraint satisfaction
     "z3-solver>=4.13",
     # Visualization: graph traversals, VSA vector spaces, composition chains
-    "matplotlib>=3.10",
+    "matplotlib>=3.11.1",
     # Lightweight parser for building formal grammars/DSLs for composition query languages
     "lark>=1.2",
 ]
 ner = [
     # spaCy NER for typed entity extraction during consolidation
     # Install model separately: uv run python -m spacy download en_core_web_sm
-    "spacy>=3.7",
+    "spacy>=3.8.15",
 ]
 dev = [
-    "pytest>=9.0",
+    "pytest>=9.1.1",
     "pytest-asyncio>=1.0",
     "pytest-benchmark>=5.1",
     "pytest-cov>=6.0",
     "pytest-xdist>=3.5",
     # Property-based testing: verify mathematical invariants of novel architectures
-    "hypothesis>=6.155.2",
-    "ruff>=0.15.17",
-    "mypy>=1.20",
-    "pre-commit>=4.0",
+    "hypothesis>=6.165.2",
+    "ruff>=0.16.2",
+    "mypy>=2.3.0",
+    "pre-commit>=4.6.1",
 ]
 
 # Force CPU-only torch wheels. Without this, uv pulls torch's default Linux
